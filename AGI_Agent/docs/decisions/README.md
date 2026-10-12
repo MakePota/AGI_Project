@@ -54,7 +54,8 @@
 | [0007](0007-tool-registry-signature-and-risk.md) | 工具注册表必须公布参数签名，风险由 `policies` 赋值 | 已采用 |
 | [0008](0008-defer-rag-and-vector-store.md) | 本阶段不引入 RAG 与向量数据库 | 已决定（可重审） |
 | [0009](0009-public-json-endpoint-for-price.md) | 价格查询用公开 JSON 端点（划定「公开稳定端点」与「逆向私有接口」的界线） | 已采用 |
-| [0010](0010-no-retry-on-uncertain-write.md) | 结果不确定的写操作不得自动重试（写工具的失败必须分三类） | 已采用 |
+| [0010](0010-no-retry-on-uncertain-write.md) | 结果不确定的写操作不得自动重试 | 已采用 |
+| [0011](0011-halt-on-unmet-precondition.md) | 前提条件不满足（代理没开、登录过期）时停下，不进重规划 | 已采用 |
 
 > `AGI_Client`、`AGI_Server` 将来各自建立自己的 `docs/decisions/`。
 > 只有真正跨子项目的决策才需要提到根目录，不要为了统一而统一。

@@ -6,7 +6,8 @@
 - 相关决策：[0001 Supervisor 模式](../decisions/0001-supervisor-multi-agent.md)、
   [0004 SQLite checkpointer](../decisions/0004-sqlite-checkpointer.md)、
   [0007 工具签名与风险](../decisions/0007-tool-registry-signature-and-risk.md)、
-  [0010 结果不确定不得重试](../decisions/0010-no-retry-on-uncertain-write.md)
+  [0010 结果不确定不得重试](../decisions/0010-no-retry-on-uncertain-write.md)、
+  [0011 前提不满足时停下](../decisions/0011-halt-on-unmet-precondition.md)
 
 ## 要解决什么问题
 
@@ -19,7 +20,7 @@
 triage（分诊）
   ├─ 闲聊 ─> conversation ─> respond
   └─ 任务 ─> planner ─> authorize ─┬─ 拒绝 ─> respond（正常终止）
-                                    └─ 批准 ─> executor ─┬─ 结果不确定 ─> respond（停下问人）
+                                    └─ 批准 ─> executor ─┬─ 不确定/前提不满足 ─> respond（停下问人）
                                                          └─ 其余 ─> reviewer ─┬─ 通过 ─> respond
                                                                               └─ 不通过 ─> planner（最多 3 轮）
 ```
@@ -33,9 +34,14 @@ triage（分诊）
 - **`PlanStep` 与 `ToolCall` 分开保存**：前者是「打算做什么」（意图），后者是「实际做了什么」
   （执行记录）。这样 reviewer 审查的是**计划本身**，而不只是执行结果。
 - **`Event` 设为 frozen**，作为不可篡改的审计轨迹。
-- **结果不确定时直接停下，不经过审查也不重规划**（`route_after_execute`）。
-  这是安全边界不是优化：重规划就是重试，而重试一个可能已经生效的写操作
-  会叠加上一次动作。完整原因见 [ADR 0010](../decisions/0010-no-retry-on-uncertain-write.md)。
+- **两类结局会直接停下，不经过审查也不重规划**（`route_after_execute`）：
+  - **结果不确定**：重规划就是重试，而重试一个可能已生效的写操作会叠加上一次动作。
+    → [ADR 0010](../decisions/0010-no-retry-on-uncertain-write.md)
+  - **前提条件不满足**（代理没开、登录过期）：重规划一百次也修不好，只有人能修。
+    → [ADR 0011](../decisions/0011-halt-on-unmet-precondition.md)
+
+  两类都会以 `NEEDS_HUMAN` 结束，但 `respond` 给的措辞**必须不同**——
+  一个要用户"去核实是否已生效"，一个要用户"去修好环境再重来"。
 
 ## 为什么这么做 / 被否决的方案
 
@@ -61,9 +67,12 @@ triage（分诊）
    如果加了新的数据契约，记得同步 `graph/checkpoint.py` 里的**序列化白名单**，
    否则恢复时会反序列化失败。
 4. **改风险判定/审批摘要怎么生成** → `policies/risk.py`。
-5. **改"结果不确定"的处理** → `src/agi_agent/tools/errors.py`（错误语义）、
+5. **改"停下"的两类结局** → `src/agi_agent/tools/errors.py`（错误语义）、
    `src/agi_agent/graph/nodes/executor.py`（中止剩余步骤）、
    `src/agi_agent/graph/builder.py` 的 `route_after_execute`、
    `src/agi_agent/graph/nodes/respond.py`（如何告诉人）。**四处要一起改。**
-6. **改完之后**：`tests/unit/test_graph_routing.py` 与 `tests/unit/test_uncertain_outcome.py`
-   覆盖路由、重规划上限与不确定链路，不消耗 API 额度，改流程时先跑它们。
+6. **改进度输出** → `src/agi_agent/cli.py` 的 `_drive`/`_report`，
+   以及节点里的 `get_stream_writer()` 调用（见 `executor.py` 的 `_progress`）。
+   **长耗时工具必须能在开始前推一行进度**，否则用户会当成卡死。
+7. **改完之后**：`tests/unit/test_graph_routing.py` 与 `tests/unit/test_uncertain_outcome.py`
+   覆盖路由、重规划上限与两类中断，不消耗 API 额度，改流程时先跑它们。
