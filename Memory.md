@@ -60,7 +60,7 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 | 想了解 | 去哪 |
 | --- | --- |
 | 项目整体架构、技术栈、目录职责 | `AGI_Agent/docs/architecture.md` |
-| 为什么引入某个依赖、为什么否掉某个方案 | `AGI_Agent/docs/decisions/`（ADR，8 篇） |
+| 为什么引入某个依赖、为什么否掉某个方案 | `AGI_Agent/docs/decisions/`（ADR，10 篇） |
 | 某个功能怎么运转、要改它先看哪里 | `AGI_Agent/docs/features/` |
 
 几条**约束性质**的结论。先知道结论，需要细节再点进 ADR：
@@ -73,6 +73,8 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 - **外部能力只走公开接口；需要登录的一律「人工登录一次 + 复用会话」，代码不接触凭据** → ADR 0006
 - 工具注册表必须公布参数签名；风险等级由 `policies` 赋值，不采信模型自报 → ADR 0007
 - 本阶段不引入 RAG 与向量数据库 → ADR 0008
+- 价格查询用公开 JSON 端点（划清了「公开稳定端点」与「逆向私有接口」的界线）→ ADR 0009
+- **写操作的失败必须分三类；结果不确定时停下问人、绝不自动重试** → ADR 0010
 - `graph`（怎么思考）/ `tools`（能做什么）/ `policies`（允许做什么）三者必须分离 → `architecture.md`
 
 ## 5. 当前实际进度
@@ -90,8 +92,9 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 | 最小闭环 | ✅ | `uv run agi-agent "..."` 真实调用 DeepSeek 并返回回复 |
 | 多 Agent 图 + 人工确认中断/恢复 | ✅ 四条路径 | 闲聊回复、任务获批后执行成功、用户拒绝后正常终止、只读任务自动放行 |
 | 本地只读文件工具 | ✅ | `local.list_dir`、`local.read_file`（首个真实工具） |
-| Steam 加购（首个 `WRITE` 工具） | ✅ 三条路径 | 中文名报错且不执行；`Nioh 3`、`Onimusha: Way of the Sword` 均加购成功并在购物车页确认 |
-| 单元测试 | ✅ 59 个 | `uv run pytest`，不消耗任何 API 额度 |
+| Steam 工具（首个 `WRITE` 风险能力） | ✅ 五个工具 | 搜索 / 查价 / 购物车列表 / 加购 / 删除；加购与删除**幂等** |
+| 「结果不确定」的写操作不再被重试 | ✅ 已修复并回归 | 一次复核失败曾让购物车出现 3 份同一游戏 → ADR 0010 |
+| 单元测试 | ✅ 87 个 | `uv run pytest`，不消耗任何 API 额度 |
 
 关键入口（完整清单以实际目录为准，目录职责见 `AGI_Agent/docs/architecture.md`）：
 
@@ -106,7 +109,7 @@ AGI_Agent/
     ├── config.py                # 配置与常量读取
     ├── schemas/                 # 稳定数据契约（6 个：task/plan/tool_call/approval/event/review）
     ├── graph/                   # builder / state / checkpoint / nodes
-    ├── tools/                   # registry + builtin(files, steam, fake)
+    ├── tools/                   # registry + errors + builtin(files, steam, fake)
     ├── providers/llm/           # 供应商注册表 + structured.py
     └── policies/                # risk.py
 ```
@@ -170,24 +173,29 @@ AGI_Agent/
 
 1. ✅ 核心数据模型（`schemas/`）
 2. ✅ 第一个最小图（`graph/`），含 `interrupt` 人工确认与恢复
-3. ✅ 测试（59 个）+ 首个真实只读工具（`local.list_dir`、`local.read_file`）
-4. ✅ **Steam 加购（走 Web，Playwright）—— 已完成并实测跑通**，含第一个 `WRITE` 风险工具
-   `steam.add_to_cart` 与只读的 `steam.search_games`。详见
-   [功能文档](AGI_Agent/docs/features/steam-add-to-cart.md) 与
+3. ✅ 首个真实只读工具（`local.list_dir`、`local.read_file`）
+4. ✅ **Steam 工具（走 Web，Playwright）—— 五个工具已完成并实测跑通**：
+   搜索、查价、购物车列表、加购、删除。详见
+   [功能文档](AGI_Agent/docs/features/steam-tools.md) 与
    [ADR 0005](AGI_Agent/docs/decisions/0005-playwright-for-browser-automation.md)
    ——后者含完整调研结论：为什么没有现成轮子可复用、为什么不走 Steam 桌面客户端。
-5. ✅ **项目知识留存方案已落地（2026-10-12）**：`AGI_Agent/docs/` 下分三块——
+5. ✅ **修复「假失败 → 自动重试 → 重复副作用」事故（2026-10-12）**：
+   工具把「验证不了」当成「操作失败」，planner 据此重试，购物车里留下了 3 份同一个游戏。
+   现在写操作分三类结局，**结果不确定时停下问人、不进重规划**，且加购/删除**幂等**。
+   完整复盘见 [ADR 0010](AGI_Agent/docs/decisions/0010-no-retry-on-uncertain-write.md)。
+6. ✅ **项目知识留存方案已落地（2026-10-12）**：`AGI_Agent/docs/` 下分三块——
    `architecture.md`（整体长什么样）、`decisions/`（ADR：为什么这样选）、
    `features/`（功能怎么运转、要改它先看哪里）。本文件随之收窄为**纯交接用途**。
    `AGI_Client`、`AGI_Server` 将来各自建立自己的 `docs/`。
-6. 之后是微信（个人版 UI 自动化）。这块除工具本身外还需单独设计：环境依赖
+7. **下一步是微信（个人版 UI 自动化）**。这块除工具本身外还需单独设计：环境依赖
    （客户端需开启并已登录）、凭据管理、以及操作中途失败时如何不留半成品状态。
    实施前仍需先做守则 §2 的调研（WeChat 的 MCP Server 与开源实现）。
-7. 尚未安装 `Ruff`。
+8. 尚未安装 `Ruff`。
 
 > 2026-10-12 会话结束时的未提交改动：Steam 相关实现（`steam.py`、`steam_login.py`、
-> `config.py` 的 `.env` 载入顺序修复、`.secrets` 黑名单、Playwright 依赖）与本次文档重构
-> （`AGI_Agent/docs/` 下的 ADR 与功能文档、本文件），**均尚未提交**，需确认后提交。
+> `config.py` 的 `.env` 载入顺序修复、`.secrets` 黑名单、Playwright 依赖）、
+> 不确定结果的处理链路（`tools/errors.py`、`executor`/`builder`/`respond`、`schemas` 新状态）、
+> 文档（`AGI_Agent/docs/` 与根 `CLAUDE.md`）与 `Memory.md` 本身，**均尚未提交**。
 
 ## 7. 新 AI 工具的启动与交接规则
 

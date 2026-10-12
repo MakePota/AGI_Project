@@ -20,6 +20,10 @@ class ToolCallStatus(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    #: 可能已经产生了副作用，但无法确认。**与 FAILED 严格区分**：
+    #: FAILED 确定没做成，可以重试；OUTCOME_UNKNOWN 不确定，重试会叠加动作。
+    #: 见 ``agi_agent.tools.errors`` 里记录的那次真实事故。
+    OUTCOME_UNKNOWN = "outcome_unknown"
 
 
 class ToolCall(SchemaModel):

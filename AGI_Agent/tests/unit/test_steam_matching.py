@@ -19,6 +19,10 @@ from agi_agent.tools.builtin.steam import _normalize
         ("The Witcher 3: Wild Hunt", "thewitcher3wildhunt"),
         ("Half-Life 2", "Half Life 2"),
         ("Baldur's Gate 3", "BaldursGate3"),
+        # 全角必须折成半角：实测中文界面写「仁王３」「Nioh ３」，英文界面写「Nioh 3」。
+        # 不做 NFKC 折叠，换个界面语言连数字都对不上。
+        ("Nioh 3", "Nioh ３"),
+        ("Nioh 3", "Nioh　3"),  # U+3000 表意空格
     ],
 )
 def test_equivalent_names_normalize_the_same(left, right):

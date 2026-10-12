@@ -16,7 +16,7 @@ from agi_agent.graph.nodes.respond import respond
 from agi_agent.graph.nodes.reviewer import reviewer
 from agi_agent.graph.nodes.triage import triage
 from agi_agent.graph.state import AgentState
-from agi_agent.schemas import ApprovalDecision, TaskKind
+from agi_agent.schemas import ApprovalDecision, TaskKind, ToolCallStatus
 
 #: planner 与 reviewer 之间允许的最大往返次数。
 #: 没有这个上限，两者会互相打回并把 API 额度烧光。
@@ -32,6 +32,18 @@ def route_after_authorize(state: AgentState) -> str:
     if approval is not None and approval.decision is ApprovalDecision.REJECTED:
         return "rejected"
     return "execute"
+
+
+def route_after_execute(state: AgentState) -> str:
+    """结果不确定时**不进审查、不进重规划**，直接停下问人。
+
+    这一条是安全边界，不是优化：重规划意味着重试，而重试一个结果未知的写操作
+    会在真实世界里叠加动作。2026-10-12 的重复加购事故就是少了这道闸——
+    工具报「失败」，planner 照常重规划，购物车里最后躺着 3 份同一个游戏。
+    """
+    if any(c.status is ToolCallStatus.OUTCOME_UNKNOWN for c in state["tool_calls"]):
+        return "halt"
+    return "review"
 
 
 def route_after_review(state: AgentState) -> str:
@@ -68,7 +80,11 @@ def build_graph() -> StateGraph:
         {"execute": "executor", "rejected": "respond"},
     )
 
-    graph.add_edge("executor", "reviewer")
+    graph.add_conditional_edges(
+        "executor",
+        route_after_execute,
+        {"review": "reviewer", "halt": "respond"},
+    )
     graph.add_conditional_edges(
         "reviewer",
         route_after_review,

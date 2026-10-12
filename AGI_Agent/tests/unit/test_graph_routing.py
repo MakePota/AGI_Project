@@ -9,6 +9,7 @@ from __future__ import annotations
 from agi_agent.graph.builder import (
     MAX_REVISIONS,
     route_after_authorize,
+    route_after_execute,
     route_after_review,
     route_after_triage,
 )
@@ -19,6 +20,8 @@ from agi_agent.schemas import (
     RiskLevel,
     Task,
     TaskKind,
+    ToolCall,
+    ToolCallStatus,
 )
 
 
@@ -55,6 +58,25 @@ def test_authorize_routes_approved_to_execute():
 def test_authorize_routes_rejected_to_respond():
     approval = _approval(ApprovalDecision.REJECTED)
     assert route_after_authorize(_state(approval=approval)) == "rejected"
+
+
+def _call(status: ToolCallStatus) -> ToolCall:
+    return ToolCall(task_id="t", step_index=0, tool="x", status=status)
+
+
+def test_execute_halts_when_an_outcome_is_unknown():
+    """结果不确定时**绝不能**进重规划——重规划就是重试，会叠加真实动作。"""
+    state = _state(tool_calls=[_call(ToolCallStatus.OUTCOME_UNKNOWN)])
+    assert route_after_execute(state) == "halt"
+
+
+def test_execute_proceeds_when_every_outcome_is_known():
+    """明确失败**不算**不确定：它确定没做成，重试是安全的。"""
+    state = _state(
+        tool_calls=[_call(ToolCallStatus.SUCCEEDED), _call(ToolCallStatus.FAILED)]
+    )
+    assert route_after_execute(state) == "review"
+    assert route_after_execute(_state(tool_calls=[])) == "review"
 
 
 def test_review_pass_finishes():

@@ -28,6 +28,9 @@ class TaskStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    #: 执行产生了无法确认的副作用，已停止，等人核实真实状态。
+    #: 与 FAILED 的区别：任务本身没有失败，是**结果未知**，需要人介入才能继续。
+    NEEDS_HUMAN = "needs_human"
 
 
 class Task(SchemaModel):
