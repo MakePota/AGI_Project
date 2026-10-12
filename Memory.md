@@ -47,6 +47,7 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 5. 删除文件/目录/Git 历史、修改 `.env` 或密钥、`git push`、`git rebase`、`git reset --hard`、强制推送、公开发布或生产部署，必须另行取得明确许可。
 6. 涉及发送消息、账号登录、文件写入、下单和支付的 Agent 能力，必须经过权限策略与必要的人工确认，并保留可审计记录。
 7. 不向对话、代码、日志或本文件写入真实 API Key、Token、密码或账号信息。
+8. 每次提交代码时，必须把本文件 `Memory.md` 一并提交并推送，保持交接文档与实际状态同步。
 
 ## 4. 已确认的架构方向
 
