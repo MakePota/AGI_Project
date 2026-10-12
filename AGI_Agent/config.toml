@@ -1,0 +1,32 @@
+# 角色 -> 模型绑定。
+#
+# 换供应商或换模型只改本文件，不需要动代码。
+# 本文件不含密钥：api_key_env 只记录环境变量的"名字"，真实密钥放在 .env
+# 或系统环境变量中，后续会迁移到服务端密钥库。
+#
+# 目前四个角色全部绑定 DeepSeek-V4.1-Flash。
+# vendor = "openai" 表示走 OpenAI 兼容端点，可覆盖 ChatGPT / DeepSeek / Kimi / 智谱 / 千问。
+
+[llm.conversation]
+vendor = "openai"
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[llm.planner]
+vendor = "openai"
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[llm.executor]
+vendor = "openai"
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[llm.reviewer]
+vendor = "openai"
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"

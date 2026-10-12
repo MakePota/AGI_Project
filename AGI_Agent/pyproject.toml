@@ -1,0 +1,22 @@
+[project]
+name = "agi-agent"
+version = "0.1.0"
+description = "Reusable reasoning and tool-orchestration engine for AGI Project"
+readme = "README.md"
+authors = [
+    { name = "zhm", email = "3482904542@qq.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "langchain-core>=1.6.9",
+    "langchain-openai>=1.7.0",
+    "pydantic-settings>=2.15.0",
+    "python-dotenv>=1.2.4",
+]
+
+[project.scripts]
+agi-agent = "agi_agent.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
