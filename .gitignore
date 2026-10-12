@@ -14,6 +14,9 @@ wheels/
 .env.*
 !.env.example
 
+# 登录会话状态（等同于凭据，泄露即可接管账号）
+.secrets/
+
 # IDE
 .idea/
 .vscode/

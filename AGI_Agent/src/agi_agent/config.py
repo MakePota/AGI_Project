@@ -24,6 +24,11 @@ from pydantic_settings import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+# 必须先载入 .env：本文件下面若干常量会在导入时读取 os.environ，
+# 若 load_dotenv 放在它们之后，.env 里的 AGI_* 配置将全部静默失效。
+# load_dotenv 默认不覆盖已存在的环境变量，因此系统环境变量优先级高于 .env。
+load_dotenv(PROJECT_ROOT / ".env")
+
 #: LangGraph checkpointer 的 SQLite 文件位置；不支持部署多副本共享。
 CHECKPOINT_DB = PROJECT_ROOT / "checkpoints.db"
 
@@ -44,9 +49,14 @@ def _allowed_roots() -> list[Path]:
 #: 本地文件工具的沙箱边界。
 ALLOWED_ROOTS = _allowed_roots()
 
-# 把 .env 载入进程环境变量，使 ModelSpec.api_key_env 能统一按名字解析。
-# load_dotenv 默认不覆盖已存在的环境变量，因此系统环境变量优先级高于 .env。
-load_dotenv(PROJECT_ROOT / ".env")
+#: 浏览器登录会话状态的位置。**等同于凭据**：不得提交、不得被本地文件工具读到。
+#: 由 scripts/steam_login.py 人工登录一次后生成。
+SECRETS_DIR = PROJECT_ROOT / ".secrets"
+STEAM_STATE = SECRETS_DIR / "steam_state.json"
+
+#: 浏览器访问外网所需的代理，例如 ``http://127.0.0.1:7897``。
+#: 不设置则由 Chromium 沿用系统默认。国内直连 Steam 不可达，通常必须设置。
+BROWSER_PROXY = os.environ.get("AGI_BROWSER_PROXY") or None
 
 
 class ModelSpec(BaseModel):

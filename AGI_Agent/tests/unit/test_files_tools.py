@@ -54,6 +54,17 @@ def test_git_directory_is_refused():
         read_file(".git/config")
 
 
+def test_secrets_directory_is_refused():
+    """登录会话状态等同于凭据——Agent 绝不能读到自己的登录态。"""
+    with pytest.raises(PermissionError, match="受保护"):
+        read_file(".secrets/steam_state.json")
+
+
+def test_secrets_directory_is_not_listable():
+    with pytest.raises(PermissionError, match="受保护"):
+        list_dir(".secrets")
+
+
 def test_directory_is_reported_as_such():
     """报"文件不存在"会把重规划引向错误方向——它是目录，不是缺失。"""
     with pytest.raises(IsADirectoryError, match="list_dir"):

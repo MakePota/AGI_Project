@@ -25,7 +25,16 @@ _MAX_READ_CHARS = 20_000
 _MAX_LIST_ENTRIES = 200
 
 #: 任何一段路径命中即拒绝。
-_DENIED_DIR_PARTS = {".git", ".ssh", ".venv", ".idea", "node_modules", "__pycache__"}
+#: `.secrets` 存放登录会话状态，等同于凭据——Agent 绝不能读到自己的登录态。
+_DENIED_DIR_PARTS = {
+    ".git",
+    ".ssh",
+    ".venv",
+    ".idea",
+    ".secrets",
+    "node_modules",
+    "__pycache__",
+}
 
 #: 文件名命中即拒绝。
 _DENIED_NAMES = {".env", ".netrc", "credentials", "id_rsa", "id_ed25519", "id_ecdsa"}
