@@ -210,16 +210,19 @@ AGI_Agent/
 - 多 Agent 图、工具注册表、MCP Client、`policies` 审批链路均未实现；`graph/`、`tools/`、`policies/` 仍是空骨架。
 - 尚未编写 `.gitattributes`；当前换行符依赖 `core.autocrlf`，跨平台协作前应固定。
 
-### Git 状态
+### 仓库结构（2026-10-12 起改为 Monorepo）
 
-`AGI_Agent` 是独立 Git 仓库（`uv init --package` 时自动创建），`E:\AGI_Project` 本身不是仓库。
+`E:\AGI_Project` 现在是唯一的 Git 仓库，包含 `AGI_Agent`、`AGI_Client`、`AGI_Server` 与本文档。
 
 - 分支：`main`
-- 远端：`origin` → `https://github.com/MakePota/AGI_Agent.git`（私密仓库），已建立跟踪
-- 首次提交：`a873dae` "feat: bootstrap agi-agent with pluggable LLM layer and core schemas"，已推送
-- `.env` 与 `.idea/` 均在 `.gitignore` 中，未进入版本库
+- 远端：`origin` → `https://github.com/MakePota/AGI_Project.git`（私密仓库）
+- 首次提交：`654fd4e` "chore: initialize AGI_Project monorepo (agent, client, server)"
+- `.env` 与 `.idea/` 均在根 `.gitignore` 中，未进入版本库
+- `AGI_Client` 与 `AGI_Server` 目前是空目录，靠 `.gitkeep` 占位
 
-若未来希望将 `AGI_Client`、`AGI_Server`、`AGI_Agent` 作为 `E:\AGI_Project` 下的单一 Monorepo 管理，需要先讨论并获得用户明确授权，才可处理该嵌套 Git 仓库；禁止擅自删除或重置其 Git 历史。
+变更说明：`AGI_Agent` 原先是被 `uv init --package` 自动初始化的独立嵌套 Git 仓库，并有独立远端 `MakePota/AGI_Agent`。经用户明确授权，该嵌套 `.git` 已删除且**历史不保留**，改为在 `E:\AGI_Project` 根目录重建为单一 Monorepo。旧的 `MakePota/AGI_Agent` 仓库由用户自行处理。
+
+依赖结构上刻意**未**引入 uv workspace：`AGI_Client` 未必是 Python 项目，且 `AGI_Server` 尚无代码。等 server 有真实 Python 代码后再讨论是否共享 lockfile。
 
 ## 6. 当前任务
 
