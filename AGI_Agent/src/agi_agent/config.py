@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -25,6 +26,23 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 #: LangGraph checkpointer 的 SQLite 文件位置；不支持部署多副本共享。
 CHECKPOINT_DB = PROJECT_ROOT / "checkpoints.db"
+
+
+def _allowed_roots() -> list[Path]:
+    """本地文件工具可访问的根目录；默认仅项目根。
+
+    可用环境变量 ``AGI_ALLOWED_ROOTS`` 覆盖，多个路径用系统分隔符（Windows 为 ``;``）。
+    """
+    raw = os.environ.get("AGI_ALLOWED_ROOTS")
+    if raw:
+        roots = [Path(p).expanduser().resolve() for p in raw.split(os.pathsep) if p.strip()]
+        if roots:
+            return roots
+    return [PROJECT_ROOT]
+
+
+#: 本地文件工具的沙箱边界。
+ALLOWED_ROOTS = _allowed_roots()
 
 # 把 .env 载入进程环境变量，使 ModelSpec.api_key_env 能统一按名字解析。
 # load_dotenv 默认不覆盖已存在的环境变量，因此系统环境变量优先级高于 .env。

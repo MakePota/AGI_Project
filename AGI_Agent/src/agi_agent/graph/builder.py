@@ -23,18 +23,18 @@ from agi_agent.schemas import ApprovalDecision, TaskKind
 MAX_REVISIONS = 3
 
 
-def _route_after_triage(state: AgentState) -> str:
+def route_after_triage(state: AgentState) -> str:
     return "task" if state["task"].kind is TaskKind.TASK else "chat"
 
 
-def _route_after_authorize(state: AgentState) -> str:
+def route_after_authorize(state: AgentState) -> str:
     approval = state.get("approval")
     if approval is not None and approval.decision is ApprovalDecision.REJECTED:
         return "rejected"
     return "execute"
 
 
-def _route_after_review(state: AgentState) -> str:
+def route_after_review(state: AgentState) -> str:
     review = state["review"]
     if review.passed:
         return "done"
@@ -57,21 +57,21 @@ def build_graph() -> StateGraph:
 
     graph.add_edge(START, "triage")
     graph.add_conditional_edges(
-        "triage", _route_after_triage, {"chat": "conversation", "task": "planner"}
+        "triage", route_after_triage, {"chat": "conversation", "task": "planner"}
     )
     graph.add_edge("conversation", "respond")
 
     graph.add_edge("planner", "authorize")
     graph.add_conditional_edges(
         "authorize",
-        _route_after_authorize,
+        route_after_authorize,
         {"execute": "executor", "rejected": "respond"},
     )
 
     graph.add_edge("executor", "reviewer")
     graph.add_conditional_edges(
         "reviewer",
-        _route_after_review,
+        route_after_review,
         {"done": "respond", "replan": "planner", "give_up": "respond"},
     )
 

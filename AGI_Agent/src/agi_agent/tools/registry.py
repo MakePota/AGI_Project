@@ -33,9 +33,21 @@ class ToolSpec:
     def validate(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """按声明校验参数。
 
+        先显式拒绝未声明的参数名：Pydantic 默认会**静默丢弃**多余字段，
+        那样错误会伪装成"缺少某字段"，把重规划引向错误方向；
+        更糟的是，若计划同时给出正确与错误的参数名，会静默按正确那个执行。
+
         校验失败时抛出带具体字段名的 ``ValueError``——这条信息会进入执行记录，
         让 reviewer 和 planner 知道该怎么改，而不是收到一个无意义的 TypeError。
         """
+        accepted = set(self.parameters.model_fields)
+        unexpected = sorted(set(arguments) - accepted)
+        if unexpected:
+            raise ValueError(
+                f"{self.name} 不接受这些参数名：{', '.join(unexpected)}。"
+                f"该工具接受的参数是：{', '.join(self.parameters.model_fields)}"
+            )
+
         try:
             return self.parameters(**arguments).model_dump()
         except ValidationError as exc:
