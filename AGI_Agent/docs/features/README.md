@@ -51,7 +51,7 @@
 - 还没打开代码、甚至不确定要不要用这个能力时就需要 → 放**文档**。
 - 不属于任何一个文件（例如「为什么不上 RAG」）→ 只能放 **ADR**。
 
-> 现实检查：`local-file-tools` 与 `steam-add-to-cart` 的第一版都犯了论证级重复，
+> 现实检查：`local-file-tools` 与 `steam-tools` 的第一版都犯了论证级重复，
 > 各自把代码 docstring 里的推理链抄了一遍。已改为链接。写文档时留意这个坑。
 
 ## 模板
@@ -80,6 +80,6 @@
 | --- | --- | --- | --- |
 | [Supervisor 多 Agent 图](supervisor-graph.md) | 已完成 | `src/agi_agent/graph/` | 分诊 → 规划 → 审批 → 执行 → 审查的完整闭环，支持中断与恢复 |
 | [本地只读文件工具](local-file-tools.md) | 已完成 | `tools/builtin/files.py` | 目录沙箱 + 凭据黑名单 + 容量上限，三道边界 |
-| [Steam 加购](steam-add-to-cart.md) | 已完成 | `tools/builtin/steam.py` | Playwright 操作 Steam 网页，把游戏加入购物车（不涉及结账支付） |
+| [Steam 工具](steam-tools.md) | 已完成 | `tools/builtin/steam.py` | 搜索、查价、购物车增删查；加购与删除是幂等的 `WRITE` 工具（不涉及结账支付） |
 
 > `AGI_Client`、`AGI_Server` 将来各自建立自己的 `docs/features/`。

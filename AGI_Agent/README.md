@@ -15,7 +15,7 @@ AGI_Client -> AGI_Server -> AGI_Agent -> Models / MCP Servers / Local Tools
 ## 当前状态
 
 已完成并**实测跑通**：多 Agent 图（含人工确认中断与恢复）、本地只读文件工具、
-Steam 加购工具（首个 `WRITE` 风险工具）、59 个单元测试。
+Steam 工具（搜索 / 查价 / 购物车增删查，首个 `WRITE` 风险能力）、87 个单元测试。
 
 完整状态见仓库根目录的 `Memory.md`。**本文件不重复记录进度**——进度会变，
 写在两处必然有一处过期。
