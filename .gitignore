@@ -21,3 +21,9 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+
+# LangGraph SQLite checkpoints
+*.db
+*.db-wal
+*.db-shm
+*.db-journal

@@ -110,11 +110,18 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 
 候选供应商：Claude、ChatGPT、Kimi、智谱、千问、DeepSeek。**当前四个角色全部绑定 DeepSeek `deepseek-flash`。**
 
-已知局限（不要假设可以完全无感替换）：
+已知局限（不要假设可以完全无感替换）——以下两条已于 2026-10-12 实测确认：
 
-- 各家 tool calling 的格式与稳定性不同，DeepSeek 尤其需要验证；
-- 结构化输出的实现机制不同（function calling 与 JSON mode 混杂）；
-- 上下文长度、并发限制与错误码不统一。
+- **结构化输出**：LangChain 的默认路径在 DeepSeek 上不可用。
+  - 默认方法走 `response_format` 的 `json_schema` 类型，DeepSeek 返回
+    `400 This response_format type is unavailable now`；
+  - `method="function_calling"` 亦不可用，DeepSeek 返回
+    `400 Thinking mode does not support this tool_choice`——`deepseek-flash` 是思考型模型，不接受被强制的 `tool_choice`。
+  - 解法：统一走 `json_mode`，并把 JSON Schema 写进提示词。已封装为
+    `providers/llm/structured.py` 的 `invoke_structured()`，供应商差异只集中在这一处。
+- **工具调用**：同样因为思考模式不接受强制 `tool_choice`，本项目**不使用** LangChain 的自动工具绑定。
+  改由 `tools` 注册表发布签名、planner 产出 `arguments`、executor 按签名校验后再调用。
+- 上下文长度、并发限制与错误码各家不同，尚未逐个验证。
 
 换供应商的目标是**低成本**，而不是**无感**。
 
@@ -122,10 +129,16 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 
 **checkpointer（LangGraph 执行状态）：选用 SQLite（`langgraph-checkpoint-sqlite`）。**
 
-- 理由：本阶段的核心验证目标是 `interrupt` 与恢复。内存 saver 无法验证"重启后能否恢复"这件事，会造成"以为验证过了"的假象。SQLite 零运维、单文件、支持跨进程恢复，且为 LangGraph 官方维护。
-- 该选择**可逆**：LangGraph 对 checkpointer 抽象良好，将来换 Postgres 或 Redis 只需替换 saver 类与连接串，图的代码不变。
-- 开发者本人只熟悉 MySQL 与 Redis，未用过 SQLite/Postgres。这不构成障碍，也不是需要专门学习的点：checkpointer 自带建表与读写，使用方不需要写任何 SQL；SQLite 是文件型数据库，无需服务、账号与端口，概念上比 MySQL 更简单。
-- 备选未采用：`langgraph-checkpoint-redis`（开发者熟悉 Redis，且为官方维护）。不用它的原因是它要求一个**常驻 Redis 服务**，本地验证 `interrupt` 恢复时会引入与验证目标无关的失败源。若将来 Redis 因其他用途成为常驻组件，可重新评估。
+- 理由：本阶段的核心验证目标是 `interrupt` 与恢复。内存 saver 无法验证"重启后能否恢复"，会造成"以为验证过了"的假象。SQLite 零运维、单文件、无需常驻服务，且由 LangChain 官方维护（位于 langgraph 主仓库内）。
+- 该选择**可逆**：LangGraph 对 checkpointer 抽象良好，将来更换只需替换 saver 类与连接串，图的代码不变。
+- 开发者本人只熟悉 MySQL 与 Redis，未用过 SQLite/Postgres。这不构成障碍：checkpointer 自带建表与读写，使用方不需要写任何 SQL；SQLite 是文件型数据库，概念上比 MySQL 更简单。
+
+**已核实但暂时搁置的备选：Redis。**
+
+- `langgraph-checkpoint-redis`（0.5.2，Redis Inc. 官方维护，2026-10-12 经 PyPI 核实）是真实可用的选项。它额外依赖 `redisvl`（Redis 向量库），可同时覆盖 **LangGraph Store（长期记忆）与向量相似度检索（RAG 存储层）**——一个后端解决三件事，这是它相对 SQLite 的实质优势，也部分回答了下方"RAG 何时引入"的问题。
+- 2026-10-12 用户决定：本阶段仍先用 SQLite，原因是不愿为此引入常驻服务，后期再优化。
+- **若将来切换到 Redis，必须开启 AOF 持久化**（`--appendonly yes`）。Redis 默认只开 RDB 定时快照、AOF 关闭，裸容器重启可能丢失最近的 checkpoint，会导致"重启后能否恢复"的验证**因存储配置而非代码失败**。这是最容易踩的坑。
+- 附带待评估项：Redis 是内存优先的存储，承载长期中断（例如等待人工确认数天）的执行状态是否合适，需要连同 TTL 与持久化策略一起考虑。
 
 **RAG 与向量数据库：本阶段不引入。**
 
@@ -158,6 +171,23 @@ runtime
 - `policies` 决定“允许做什么”。
 
 三者必须保持分离。
+
+工具注册的额外约束（2026-10-12 实测教训）：
+
+- `ToolSpec` **必须公布参数签名**（一个 Pydantic 模型）。不公布签名，planner 只能猜参数名，
+  会在重规划里反复猜测并最终失败——实测中出现过连续三轮分别猜 `recipient`、`contact`、`message`。
+- 风险等级由**注册表**定义、由 `policies` 赋值，**不采信模型在计划里自报的 `risk`**。
+- executor 在调用前按签名校验参数，让失败信息具体到字段名，而不是抛出无意义的 `TypeError`。
+- **MCP 工具是同一个注册表的一种"来源"，不是另一套体系。** 将来接入 MCP Server 时，
+  必须把 MCP 发现的工具**登记进 `tools` 注册表**（补齐 `ToolSpec` 的签名与风险等级），
+  使 `planner` 看到的始终是一份统一的工具清单。**禁止为 MCP 另建平行的工具调用路径**——
+  那会让 MCP 工具绕过 `policies` 的风险判定与人工确认，是最危险的一种重构。
+- **接入 MCP 的时机：某能力已有成熟可信的第三方实现时。** 像读文件这种 20 行就能手写的，
+  不值得为它引入 MCP Client 层（子进程管理、协议握手、Node 运行时、跨进程调试）。
+  MCP 层应当被一个真实需求一次性逼出来并认真设计，而不是被小需求顺手带出来。
+- 关于 Claude Code 的 Skill：那是 Claude Code 自身的能力，**不是本 Agent 运行时的能力**。
+  本 Agent 是独立进程，不加载 Skill。除非将来明确决定让 Agent 反向驱动 Claude Code，
+  否则不要把它当作工具来源。
 
 ## 5. 当前实际进度
 
@@ -225,6 +255,34 @@ AGI_Agent/
 
 数据契约的关键设计：`PlanStep`（意图）与 `ToolCall`（实际执行记录）分开保存，使 reviewer 能审查策划本身而不只是执行结果；`Event` 设为 frozen，作为不可篡改的审计轨迹；所有契约 `extra="forbid"`，未声明字段直接报错。
 
+**第一个最小图已完成（2026-10-12）**：`uv run agi-agent "..."` 走完整多 Agent 图，支持人工确认中断与恢复。
+
+新增模块：
+
+```text
+src/agi_agent/
+├── graph/
+│   ├── builder.py       # 装配：triage -> 闲聊 / 任务(plan -> authorize -> execute -> review 回环)
+│   ├── checkpoint.py    # SQLite checkpointer 装配 + 序列化白名单
+│   ├── state.py         # AgentState
+│   └── nodes/           # triage, conversation, planner, authorize, executor, reviewer, respond
+├── policies/risk.py     # 风险赋值、整批审批判定、审批摘要
+├── providers/llm/structured.py  # 跨供应商结构化输出
+├── schemas/review.py    # 第六个契约：Review
+└── tools/
+    ├── registry.py      # 注册表：名称 -> 实现 / 参数签名 / 风险等级
+    └── builtin/fake.py  # 假工具（测试替身，非真实能力）
+```
+
+关键决策：
+
+- **风险等级由 `policies` 依据 `tools` 注册表赋值，不采信模型自报的 `risk`。** 已实测：模型谎报 `read` 会被覆盖为 `write` 并触发审批。
+- 审批为**整批判定**——计划中任一步骤非只读，就中断一次并把完整计划交给用户。
+- 审查不通过回到 `planner` 重新规划，`MAX_REVISIONS = 3` 封顶。
+- 闲聊分支不经过审批，一次 `conversation` 调用即返回。
+
+已实测四条路径：闲聊回复、任务获批后执行成功、用户拒绝后正常终止、只读任务自动放行（不弹确认）。
+
 ### 尚未完成 / 未执行
 
 - `langgraph` 尚未安装；等第一个真实可加载的图出现时再装。
@@ -276,9 +334,13 @@ AGI_Agent/
 
 ### 下一步
 
-1. ✅ 核心数据模型已定义（`schemas/`）：`Task`、`Plan`、`ToolCall`、`Approval`、`Event`。
-2. 安装 `langgraph` 与 `langgraph-checkpoint-sqlite`（选型理由见 §4 持久化与检索方向），写第一个最小图：`planner` 分诊 -> 闲聊分支（`conversation`）/ 任务分支（`executor` + `reviewer` 回环），重点跑通 `interrupt` 人工确认与恢复，工具先用假实现。
-3. 再接入真实工具：先 Steam（走 Web，低风险易验证），后微信（个人版 UI 自动化，高风险且脆弱）。两者都要落在 `tools/`，并经 `policies/` 审批。
+1. ✅ 核心数据模型（`schemas/`）
+2. ✅ 第一个最小图（`graph/`），含 `interrupt` 人工确认与恢复
+3. 把假工具换成真实工具，建议顺序：
+   - 先做一个**只读**工具（例如真实的 `local.read_file`，必要时限定可访问目录）。它不需审批，能立刻验证"审查通过"的完整成功路径——**目前所有只读任务都会因为假工具返回占位符而被 reviewer 正确驳回**，这条路径还没被真正走通。
+   - 再做 Steam（走 Web，低风险、易验证）。
+   - 最后做微信（个人版 UI 自动化，高风险且脆弱）。
+4. 补测试（`pytest`）与 `Ruff`。
 
 关于 WeChat / Steam 的成熟 MCP Server 与开源实现调研，用户已明确暂缓，实施前需先做。
 

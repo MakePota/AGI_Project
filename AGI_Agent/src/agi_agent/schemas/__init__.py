@@ -13,6 +13,7 @@ from agi_agent.schemas.common import (
 )
 from agi_agent.schemas.event import Event, EventType
 from agi_agent.schemas.plan import Plan, PlanStep
+from agi_agent.schemas.review import Review
 from agi_agent.schemas.task import Task, TaskKind, TaskStatus
 from agi_agent.schemas.tool_call import ToolCall, ToolCallStatus
 
@@ -23,6 +24,7 @@ __all__ = [
     "EventType",
     "Plan",
     "PlanStep",
+    "Review",
     "RiskLevel",
     "Role",
     "SchemaModel",

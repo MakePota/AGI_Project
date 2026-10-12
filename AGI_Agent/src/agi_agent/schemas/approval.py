@@ -26,7 +26,7 @@ class Approval(SchemaModel):
 
     id: str = Field(default_factory=new_id)
     task_id: str
-    tool_call_id: str
+    tool_call_id: str | None = None  # 整批审批时不对应单个调用，故可为空
     summary: str  # 给人看的说明：将要做什么、会影响什么
     risk: RiskLevel
     requested_at: datetime = Field(default_factory=utc_now)

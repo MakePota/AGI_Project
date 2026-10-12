@@ -21,11 +21,14 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+#: LangGraph checkpointer 的 SQLite 文件位置；不支持部署多副本共享。
+CHECKPOINT_DB = PROJECT_ROOT / "checkpoints.db"
 
 # 把 .env 载入进程环境变量，使 ModelSpec.api_key_env 能统一按名字解析。
 # load_dotenv 默认不覆盖已存在的环境变量，因此系统环境变量优先级高于 .env。
-load_dotenv(_PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 class ModelSpec(BaseModel):
@@ -50,7 +53,7 @@ class LLMSettings(BaseModel):
 class Settings(BaseSettings):
     """全局配置；角色与模型的绑定来自 ``config.toml``。"""
 
-    model_config = SettingsConfigDict(toml_file=_PROJECT_ROOT / "config.toml")
+    model_config = SettingsConfigDict(toml_file=PROJECT_ROOT / "config.toml")
 
     llm: LLMSettings
 
