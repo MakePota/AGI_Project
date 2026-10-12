@@ -34,14 +34,22 @@ def route_after_authorize(state: AgentState) -> str:
     return "execute"
 
 
+#: 出现就立刻停下、不进审查也不进重规划的调用状态。
+#: 为什么都不重试：结果不确定时重试会叠加真实动作（ADR 0010）；
+#: 前提条件不满足时重试根本修不好——代理没开、登录过期都不是计划的问题。
+_HALT_STATUSES = frozenset(
+    {ToolCallStatus.OUTCOME_UNKNOWN, ToolCallStatus.PRECONDITION_FAILED}
+)
+
+
 def route_after_execute(state: AgentState) -> str:
-    """结果不确定时**不进审查、不进重规划**，直接停下问人。
+    """执行出现"走下去没有意义"的结局时，**不进审查、不进重规划**，直接停下问人。
 
     这一条是安全边界，不是优化：重规划意味着重试，而重试一个结果未知的写操作
     会在真实世界里叠加动作。2026-10-12 的重复加购事故就是少了这道闸——
     工具报「失败」，planner 照常重规划，购物车里最后躺着 3 份同一个游戏。
     """
-    if any(c.status is ToolCallStatus.OUTCOME_UNKNOWN for c in state["tool_calls"]):
+    if any(c.status in _HALT_STATUSES for c in state["tool_calls"]):
         return "halt"
     return "review"
 

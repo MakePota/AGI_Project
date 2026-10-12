@@ -70,6 +70,12 @@ def test_execute_halts_when_an_outcome_is_unknown():
     assert route_after_execute(state) == "halt"
 
 
+def test_execute_halts_when_a_precondition_is_not_met():
+    """代理没开、登录过期：重规划也修不好，只有人能修，所以同样要停。"""
+    state = _state(tool_calls=[_call(ToolCallStatus.PRECONDITION_FAILED)])
+    assert route_after_execute(state) == "halt"
+
+
 def test_execute_proceeds_when_every_outcome_is_known():
     """明确失败**不算**不确定：它确定没做成，重试是安全的。"""
     state = _state(

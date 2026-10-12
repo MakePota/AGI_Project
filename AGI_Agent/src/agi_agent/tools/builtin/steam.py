@@ -43,7 +43,7 @@ from pydantic import BaseModel, Field
 
 from agi_agent.config import BROWSER_PROXY, STEAM_STATE
 from agi_agent.schemas import RiskLevel
-from agi_agent.tools.errors import ToolError, UncertainOutcomeError
+from agi_agent.tools.errors import PreconditionError, ToolError, UncertainOutcomeError
 from agi_agent.tools.registry import ToolSpec, register
 
 _STORE_URL = "https://store.steampowered.com"
@@ -56,6 +56,10 @@ _PRICE_CC = "cn"
 _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
 _TIMEOUT_MS = 45_000
+#: 开跑前探测"Steam 通不通"用的超时。故意远短于默认值：
+#: 代理程序开着但上游不通时，`goto` 会一直等到默认超时，
+#: 用户面对的是一个 45 秒不动的窗口。探路不该花这么久。
+_PREFLIGHT_TIMEOUT_MS = 8_000
 #: 等 React 把购物车画出来的上限。旧实现用 1.2 秒读 body 文本，React 还没渲染完，
 #: 于是"购物车里找不到"被误判成操作失败——这是重复加购事故的成因之一。
 _RENDER_TIMEOUT_S = 20.0
@@ -85,7 +89,11 @@ _NETWORK_MARKERS = (
     "ERR_PROXY_CONNECTION_FAILED",
     "ERR_INTERNET_DISCONNECTED",
     "ERR_NETWORK_CHANGED",
+    "ERR_SSL",
 )
+
+#: Steam 的登录凭据 cookie。只用来判断"还登着吗"，绝不读取或续期。
+_LOGIN_COOKIE = "steamLoginSecure"
 
 
 # ---------------------------------------------------------------- 数据模型
@@ -155,30 +163,75 @@ def _format_price(title: str, appid: str, data: dict[str, Any]) -> str:
 # ---------------------------------------------------------------- 浏览器
 
 
-def _network_error(exc: Exception, what: str) -> ToolError:
+def _network_error(exc: Exception, what: str) -> PreconditionError:
     """把底层网络异常翻译成一句能指导行动的话。
 
-    这一条是给"未开代理"那次事故补的：旧实现任由 Chromium 的超时往上冒，
-    用户看到的是无意义的等待与超时，白烧了两轮重规划。
+    一律返回 ``PreconditionError``：网络不通是**前提条件**问题，重规划多少次
+    也修不好，只有人能修。报成普通失败会让 planner 白跑几轮。
     """
     text = str(exc)
     first_line = text.splitlines()[0] if text else type(exc).__name__
-    if any(marker in text for marker in _NETWORK_MARKERS):
-        return ToolError(
-            f"无法访问 Steam（{what}）：{first_line}\n"
-            f"当前代理：BROWSER_PROXY={BROWSER_PROXY or '（未设置）'}。"
-            "请确认代理已开启；未设置时请在 .env 中配置 AGI_BROWSER_PROXY。\n"
-            "**本次没有执行任何动作。** 这是环境问题不是计划问题，"
-            "重试不会改善——请先解决网络，再重新发起任务。"
+    proxy = BROWSER_PROXY or "（未设置，请在 .env 中配置 AGI_BROWSER_PROXY）"
+
+    if "Timeout" in text or "超时" in text:
+        # 超时值得单独说：代理程序开着、但上游节点不通时就是这个表现，
+        # 而 `ERR_PROXY_CONNECTION_FAILED` 那种"代理根本没开"反而会立刻失败。
+        return PreconditionError(
+            f"访问 Steam 超时（{what}）：{first_line}\n"
+            f"当前代理：BROWSER_PROXY={proxy}\n"
+            "代理程序开着但上游不通时就是这个表现——请确认代理本身能出网。\n"
+            "**本次没有执行任何动作。**"
         )
-    return ToolError(f"访问 Steam 失败（{what}）：{first_line}")
+    if any(marker in text for marker in _NETWORK_MARKERS):
+        return PreconditionError(
+            f"无法访问 Steam（{what}）：{first_line}\n"
+            f"当前代理：BROWSER_PROXY={proxy}\n"
+            "请确认代理已开启。**本次没有执行任何动作。**"
+        )
+    return PreconditionError(
+        f"访问 Steam 失败（{what}）：{first_line}\n**本次没有执行任何动作。**"
+    )
 
 
-def _goto(page: Page, url: str, *, what: str) -> None:
+def _goto(page: Page, url: str, *, what: str, timeout_ms: int | None = None) -> None:
     try:
-        page.goto(url, wait_until="domcontentloaded")
+        page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
     except PlaywrightError as exc:
         raise _network_error(exc, what) from exc
+
+
+def _preflight(page: Page) -> None:
+    """开跑前先确认 Steam 可达，**用短超时**。
+
+    这一步是补出来的：没有它时，代理开着但上游不通会一路等到 45 秒的默认超时，
+    用户面对的是一个完全不动的窗口，而且 planner 还会白跑几轮重规划。
+    """
+    _goto(page, _STORE_URL, what="探测 Steam 是否可达", timeout_ms=_PREFLIGHT_TIMEOUT_MS)
+
+
+def _login_expired() -> PreconditionError:
+    """登录态失效时的唯一正确说法：让人重新扫码。**不自动续期**（ADR 0006）。"""
+    return PreconditionError(
+        "Steam 登录态已过期。\n"
+        "请运行下面的命令扫码重新登录一次，然后重新发起任务：\n"
+        "    uv run python scripts/steam_login.py\n"
+        "（程序不会也无法自动续期——自动续期意味着代码要接触你的凭据。）"
+    )
+
+
+def _is_logged_in(page: Page) -> bool:
+    """本地会话里是否还带着登录凭据 cookie。
+
+    只作**辅助**判断：cookie 名字或形态若变化，这里会返回 False，但不代表一定没登录。
+    因此它只在结果反常时才被用来区分「真的没登录」和「真的空购物车」。
+    """
+    return _LOGIN_COOKIE in {c["name"] for c in page.context.cookies()}
+
+
+def _require_login(page: Page) -> None:
+    """前置条件：登录态有效。**只检测，绝不续期**（ADR 0006）。"""
+    if "/login" in page.url:
+        raise _login_expired()
 
 
 @contextlib.contextmanager
@@ -235,6 +288,12 @@ _JS_READ_CART = r"""
   return {
     items: items,
     empty_marked: /your cart is empty/i.test(body) || /购物车是空的/.test(body),
+    // 下面三项只为**诊断**：读不到内容时必须能说清页面实际是什么。
+    // 旧实现把三种完全不同的情况混成一句含糊的"读不到购物车内容"，
+    // 用户拿着那句话根本不知道该去查代理、还是该重新登录、还是该等修 bug。
+    react_root: !!document.querySelector('[data-featuretarget="react-root"]'),
+    on_login: /\/login/i.test(location.pathname),
+    excerpt: body.replace(/\s+/g, ' ').trim().slice(0, 120),
   };
 }
 """
@@ -272,12 +331,14 @@ _JS_MARK_REMOVE = r"""
 
 
 def _read_cart(page: Page) -> list[CartItem]:
-    """读购物车条目；读不到就报错，**不猜**。
+    """读购物车条目；读不到就**说清原因**，不猜也不含糊。
 
     必须等到 React 真的画完。旧实现 ``domcontentloaded`` + 1.2 秒就读 body 文本，
     React 尚未渲染，于是「找不到该游戏」被当成操作失败并触发重试。
     """
     _goto(page, _CART_URL, what="打开购物车")
+    # 登录检查放在轮询之前：过期时立刻给出"去重新扫码"，不让用户干等 20 秒。
+    _require_login(page)
 
     deadline = time.monotonic() + _RENDER_TIMEOUT_S
     snapshot: dict[str, Any] | None = None
@@ -290,13 +351,43 @@ def _read_cart(page: Page) -> list[CartItem]:
             break
         page.wait_for_timeout(_RENDER_POLL_MS)
 
-    if not snapshot or not (snapshot["items"] or snapshot["empty_marked"]):
-        raise ToolError(
-            "读不到购物车内容：页面在 "
-            f"{_RENDER_TIMEOUT_S:.0f} 秒内既没出现商品，也没出现空购物车提示。"
-            "可能是网络不稳、Steam 页面改版，或登录态已失效。"
+    if snapshot and (snapshot["items"] or snapshot["empty_marked"]):
+        items = [CartItem(**item) for item in snapshot["items"]]
+        # 「空购物车」与「登录态失效」看起来一样，必须分开——否则用户会
+        # 以为自己清空了购物车，实际只是没登录。
+        if not items and not _is_logged_in(page):
+            raise _login_expired()
+        return items
+
+    raise _cart_unreadable(snapshot)
+
+
+def _cart_unreadable(snapshot: dict[str, Any] | None) -> ToolError:
+    """读不到购物车时，把页面**实际是什么**说清楚。
+
+    这是原先最含糊的一处报错：「读不到购物车内容」同时可能意味着代理错误页、
+    登录页、或 Steam 改版，而这三者要用户做的事完全不同。
+    """
+    if not snapshot:
+        return ToolError("读不到购物车：页面没有任何回应。")
+
+    if snapshot.get("on_login"):
+        return _login_expired()
+
+    excerpt = snapshot.get("excerpt") or "（空）"
+    if not snapshot.get("react_root"):
+        return PreconditionError(
+            "购物车页没有正常加载——页面上找不到 Steam 的应用根节点，"
+            "多半是代理/网络返回了错误页。\n"
+            f"当前代理：BROWSER_PROXY={BROWSER_PROXY or '（未设置）'}\n"
+            f"页面内容开头：{excerpt}\n"
+            "**本次没有执行任何动作。**"
         )
-    return [CartItem(**item) for item in snapshot["items"]]
+    return ToolError(
+        f"购物车页加载正常，但 {_RENDER_TIMEOUT_S:.0f} 秒内既读不到商品、"
+        f"也读不到空购物车提示——Steam 可能改了页面结构。\n"
+        f"页面内容开头：{excerpt}"
+    )
 
 
 def _cart_has(items: list[CartItem], appid: str) -> bool:
@@ -439,6 +530,7 @@ class SearchArgs(BaseModel):
 def search_games(query: str) -> str:
     """只读：列出搜索结果，用于确认游戏在商店中的正式名称。"""
     with _page() as page:
+        _preflight(page)
         hits = _search(page, query)
     if not hits:
         return f"Steam 商店没有搜到「{query}」。注意商店不索引中文名。"
@@ -455,6 +547,7 @@ class EmptyArgs(BaseModel):
 def list_cart() -> str:
     """只读：列出购物车里的全部商品。"""
     with _page() as page:
+        _preflight(page)
         items = _read_cart(page)
     if not items:
         return "购物车是空的。"
@@ -481,6 +574,7 @@ class GameArgs(BaseModel):
 def get_price(game: str) -> str:
     """只读：查一个游戏当前在中国区的价格。"""
     with _page() as page:
+        _preflight(page)
         hit = _pick_result(page, game)
     if not hit.appid:
         raise ToolError(f"没能确定「{hit.title}」的 appid，无法查询价格。")
@@ -490,6 +584,7 @@ def get_price(game: str) -> str:
 def add_to_cart(game: str) -> str:
     """把游戏加入购物车。**幂等**：已经在购物车里就不会再加一次。"""
     with _page() as page:
+        _preflight(page)
         hit = _pick_result(page, game)
 
         # 幂等闸门。它同时挡掉两类问题：用户重复下单，以及执行失败后的重试。
@@ -538,6 +633,7 @@ def add_to_cart(game: str) -> str:
 def remove_from_cart(game: str) -> str:
     """从购物车移除**全部**同名条目。幂等：本来就不在，就什么都不做。"""
     with _page() as page:
+        _preflight(page)
         items = _read_cart(page)
         if not _matching(items, game):
             shown = "、".join(f"「{i.name}」" for i in items) or "（空）"

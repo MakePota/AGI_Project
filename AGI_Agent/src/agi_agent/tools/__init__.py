@@ -5,10 +5,11 @@
 """
 
 from agi_agent.tools import builtin  # noqa: F401  导入即注册内置工具
-from agi_agent.tools.errors import ToolError, UncertainOutcomeError
+from agi_agent.tools.errors import PreconditionError, ToolError, UncertainOutcomeError
 from agi_agent.tools.registry import ToolSpec, all_specs, catalog_for_prompt, get, register
 
 __all__ = [
+    "PreconditionError",
     "ToolError",
     "ToolSpec",
     "UncertainOutcomeError",

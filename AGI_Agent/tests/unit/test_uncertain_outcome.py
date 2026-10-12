@@ -1,6 +1,11 @@
-"""「结果不确定」的调用必须停下来问人，而不是被重试。
+"""会「当场停下」的两类工具结局。
 
-这是 2026-10-12 那次重复加购事故的回归测试。事故的三个环节，这里各锁一条：
+一次工具调用有三种失败结局，其中两种**都不该被重试**，但要求用户做的事完全不同：
+
+- `UncertainOutcomeError` —— 可能已经生效，不知道 → 让人**去核实**。
+- `PreconditionError` —— 确定没做，但重规划也修不好（代理没开、登录过期）→ 让人**去修环境**。
+
+本文件是 2026-10-12 那次重复加购事故的回归测试。事故的三个环节各锁一条：
 
 1. 工具把「点击已成功、复核失败」报成了普通失败；
 2. planner 看到失败就重新规划，重试又加了一次；
@@ -24,7 +29,12 @@ from agi_agent.schemas import (
     ToolCall,
     ToolCallStatus,
 )
-from agi_agent.tools import ToolError, UncertainOutcomeError, register
+from agi_agent.tools import (
+    PreconditionError,
+    ToolError,
+    UncertainOutcomeError,
+    register,
+)
 from agi_agent.tools.registry import ToolSpec
 
 
@@ -38,6 +48,10 @@ def _raise_uncertain() -> str:
 
 def _raise_certain() -> str:
     raise ToolError("页面打不开")
+
+
+def _raise_precondition() -> str:
+    raise PreconditionError("Steam 登录态已过期，请重新扫码登录")
 
 
 def _ok() -> str:
@@ -60,6 +74,15 @@ register(
         risk=RiskLevel.WRITE,
         parameters=_NoArgs,
         func=_raise_certain,
+    )
+)
+register(
+    ToolSpec(
+        name="test.precondition",
+        description="总是前提条件不满足",
+        risk=RiskLevel.WRITE,
+        parameters=_NoArgs,
+        func=_raise_precondition,
     )
 )
 register(
@@ -154,3 +177,67 @@ def test_respond_leaves_ordinary_success_alone():
         }
     )
     assert out["task"].status is TaskStatus.COMPLETED
+
+
+# ------------------------------------------------------------------ 前提条件不满足
+
+
+def test_precondition_failure_is_not_an_ordinary_failure():
+    """登录过期、代理没开不是"计划的问题"，混进 FAILED 会让 planner 白跑几轮。"""
+    calls = executor(_state(_plan("test.precondition")))["tool_calls"]
+    assert calls[0].status is ToolCallStatus.PRECONDITION_FAILED
+    assert calls[0].status is not ToolCallStatus.FAILED
+
+
+def test_precondition_failure_also_stops_the_plan():
+    calls = executor(_state(_plan("test.precondition", "test.ok")))["tool_calls"]
+    assert len(calls) == 1
+
+
+def test_respond_tells_the_user_to_fix_the_environment_not_to_verify():
+    """两类中断要说完全不同的话——说混了用户不知道该核实还是该修复。"""
+    call = ToolCall(
+        task_id="t",
+        step_index=0,
+        tool="steam.add_to_cart",
+        status=ToolCallStatus.PRECONDITION_FAILED,
+        error="Steam 登录态已过期，请重新扫码登录",
+    )
+    out = respond(
+        {
+            "task": Task(goal="加购"),
+            "tool_calls": [call],
+            "approval": None,
+            "review": None,
+            "reply": None,
+            "revision": 1,
+        }
+    )
+    assert out["task"].status is TaskStatus.NEEDS_HUMAN
+    assert "确实没有执行" in out["reply"]
+    assert "重新登录" in out["reply"]
+    # 关键区别：确定没做，就不能让人去"核实是否已经生效"。
+    assert "可能已经生效" not in out["reply"]
+
+
+def test_respond_reports_both_kinds_when_both_happen():
+    unknown = ToolCall(
+        task_id="t", step_index=0, tool="a",
+        status=ToolCallStatus.OUTCOME_UNKNOWN, error="无法确认",
+    )
+    blocked = ToolCall(
+        task_id="t", step_index=1, tool="b",
+        status=ToolCallStatus.PRECONDITION_FAILED, error="代理未开启",
+    )
+    out = respond(
+        {
+            "task": Task(goal="g"),
+            "tool_calls": [unknown, blocked],
+            "approval": None,
+            "review": None,
+            "reply": None,
+            "revision": 1,
+        }
+    )
+    assert "可能已经生效" in out["reply"]
+    assert "确实没有执行" in out["reply"]
