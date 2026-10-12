@@ -118,6 +118,28 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 
 换供应商的目标是**低成本**，而不是**无感**。
 
+### 持久化与检索方向（2026-10-12 确认）
+
+**checkpointer（LangGraph 执行状态）：选用 SQLite（`langgraph-checkpoint-sqlite`）。**
+
+- 理由：本阶段的核心验证目标是 `interrupt` 与恢复。内存 saver 无法验证"重启后能否恢复"这件事，会造成"以为验证过了"的假象。SQLite 零运维、单文件、支持跨进程恢复，且为 LangGraph 官方维护。
+- 该选择**可逆**：LangGraph 对 checkpointer 抽象良好，将来换 Postgres 或 Redis 只需替换 saver 类与连接串，图的代码不变。
+- 开发者本人只熟悉 MySQL 与 Redis，未用过 SQLite/Postgres。这不构成障碍，也不是需要专门学习的点：checkpointer 自带建表与读写，使用方不需要写任何 SQL；SQLite 是文件型数据库，无需服务、账号与端口，概念上比 MySQL 更简单。
+- 备选未采用：`langgraph-checkpoint-redis`（开发者熟悉 Redis，且为官方维护）。不用它的原因是它要求一个**常驻 Redis 服务**，本地验证 `interrupt` 恢复时会引入与验证目标无关的失败源。若将来 Redis 因其他用途成为常驻组件，可重新评估。
+
+**RAG 与向量数据库：本阶段不引入。**
+
+- 理由：RAG 解决的是"模型不知道的事实太多、塞不进 prompt"。当前任务的瓶颈是"无法操作微信与 Steam"，属于工具能力问题，检索无法替代。当前也没有可检索的语料。
+- 触发条件（出现任一再评估）：本地文件检索与总结、长期记忆、网页查询结果沉淀复用。
+- 注意定位：这些在本文档 §1 中属于**后续独立 Skill/Tool 能力**，将来应作为 `tools/` 下的能力接入，**而不是先改造数据库层**。顺序反了会白做。
+- 若将来 RAG 与 checkpointer 都需要 Postgres，可用 `pgvector` 扩展共用一个实例；但这只是运维层面的省事，不代表两者在架构上耦合。
+
+**尚未解决的边界问题（待 `AGI_Server` 有设计时确认）：**
+
+`AGI_Server` 的职责包含任务持久化（见 §2），而 checkpointer 同样会写库。当前判定两者不冲突——checkpointer 存的是**执行状态**（图的中间态、待审批的中断点，属于执行引擎的内部实现细节），`AGI_Server` 存的是**业务记录**（`Task`、`Event`、`Approval`，需要对外展示与审计）。
+
+但将来 `AGI_Server` 若要向客户端暴露"任务当前进行到哪一步"，这两层就需要设计同步方式。现在不解决，但不要等 Server 动手时才发现。
+
 ### AGI_Agent 内部边界
 
 ```text
@@ -255,7 +277,7 @@ AGI_Agent/
 ### 下一步
 
 1. ✅ 核心数据模型已定义（`schemas/`）：`Task`、`Plan`、`ToolCall`、`Approval`、`Event`。
-2. 安装 `langgraph`，写第一个最小图：`planner` 分诊 -> 闲聊分支（`conversation`）/ 任务分支（`executor` + `reviewer` 回环），重点跑通 `interrupt` 人工确认与恢复，工具先用假实现。
+2. 安装 `langgraph` 与 `langgraph-checkpoint-sqlite`（选型理由见 §4 持久化与检索方向），写第一个最小图：`planner` 分诊 -> 闲聊分支（`conversation`）/ 任务分支（`executor` + `reviewer` 回环），重点跑通 `interrupt` 人工确认与恢复，工具先用假实现。
 3. 再接入真实工具：先 Steam（走 Web，低风险易验证），后微信（个人版 UI 自动化，高风险且脆弱）。两者都要落在 `tools/`，并经 `policies/` 审批。
 
 关于 WeChat / Steam 的成熟 MCP Server 与开源实现调研，用户已明确暂缓，实施前需先做。
