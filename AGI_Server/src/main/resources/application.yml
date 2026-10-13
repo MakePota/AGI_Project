@@ -1,0 +1,78 @@
+spring:
+  application:
+    name: agi-server
+
+  # 从 AGI_Server/.env 读数据库口令等本地配置。
+  #
+  # 为什么这么做：起 MySQL 容器（docker compose）与后端连库（Spring）需要**同一份**
+  # 口令。如果两边各写一遍，就会出现"改了 compose 忘了改 Spring"这类只在重启后
+  # 才暴露的问题。`optional:` 表示文件不存在也不报错——生产环境靠真实环境变量注入，
+  # 不该依赖这个文件。
+  config:
+    import: optional:file:./.env[.properties]
+
+  datasource:
+    # useSSL=false / allowPublicKeyRetrieval=true 只在**本地开发**可接受：
+    # 前者放弃传输加密，后者允许客户端从服务端取公钥（中间人可借此拿到口令）。
+    # 上生产必须换成 TLS 连接，并去掉后者。
+    url: jdbc:mysql://127.0.0.1:3307/agi?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USER:agi}
+    password: ${MYSQL_PASSWORD}
+    hikari:
+      # 单人自用，5 条连接绰绰有余。把池开大只会掩盖"每次请求都新建连接"这类问题。
+      maximum-pool-size: 5
+
+  jpa:
+    # validate：表结构由 Flyway 负责，JPA 只**校验**实体与表是否对得上。
+    # 绝对不要用 update 让 Hibernate 自动改表——改动没有记录，而且它会在你
+    # 没注意的时候把列删掉或改窄。企业项目里这条基本是硬规矩。
+    hibernate:
+      ddl-auto: validate
+    # 关掉 open-in-view：它会让数据库连接一直持有到视图渲染完，
+    # 是"连接莫名被占满"的常见根因，而且掩盖了懒加载该不该用的判断。
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: Asia/Shanghai
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  # 明确用 Servlet（Spring MVC）+ SseEmitter 给前端推事件。
+  # 依赖里同时有 webflux（那是为了 WebClient 消费 Agent 的流），
+  # 不写这一行它会按 classpath 自己猜；显式声明可以避免"某天加了个依赖，
+  # Web 栈就被换掉了"这种极难定位的变化。
+  main:
+    web-application-type: servlet
+
+server:
+  # 8090 而不是 8080：8080 已被本机其它服务占用（有个容器正在用）。
+  # 默认端口撞车的后果是"启动失败"，而排查它要花的时间远超选一个不常用端口的成本。
+  port: 8090
+
+  # **只监听本机。** Spring Boot 默认绑 0.0.0.0（所有网卡），实测确认过。
+  # 这个服务**没有认证**，绑 0.0.0.0 等于把"局域网里任何人都能驱动这个 Agent"
+  # 开放出去——而这个 Agent 能操作 Steam 账号、读本地文件。
+  # 要暴露到局域网，必须**先加认证**（本期没做，见 ADR 0016 的"本期明确不做"）。
+  address: 127.0.0.1
+
+agi:
+  agent:
+    # AGI_Agent 的内部服务 API（见 ADR 0014）。
+    base-url: http://127.0.0.1:8123
+    # 连接超时只给 3 秒：连不上就是连不上，让用户立刻看到明确错误，
+    # 而不是等一个默认的几十秒。
+    connect-timeout-ms: 3000
+    # 普通请求超时。这三个接口在 Agent 那边都是"立刻返回、任务在后台排队"，
+    # 给 15 秒已经很宽松；真卡住说明是环境问题，早点报出来更好。
+    request-timeout-ms: 15000
+    # 事件流最长等 30 分钟。**这个值不能按"请求超时"来理解**：
+    # 任务可能长时间停在"等人批准"，期间流上只有心跳。
+    # 给太短会让正常流程被误杀。
+    event-timeout-ms: 1800000
+
+logging:
+  level:
+    com.agiproject.server: INFO

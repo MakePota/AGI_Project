@@ -1,0 +1,17 @@
+# 根目录的 .gitignore 是按 Python 项目写的（__pycache__、.venv、*.pyc…），
+# Java 的构建产物不在其中。少了这一条，`git add .` 会把整个 target/
+# （编译出的 class、打好的 jar、复制的资源）一起提交进去——
+# 它每次构建都变，会让 diff 变成一堆二进制噪音。
+
+# Maven 构建产物
+target/
+
+# IDE（根 .gitignore 也覆盖了，这里显式写一遍：本目录是 Java 项目，
+# 换个人只看到这个子目录时也应该清楚哪些不该提交）
+.idea/
+*.iml
+.vscode/
+
+# 本地配置：**里面有数据库口令**。根 .gitignore 已覆盖，这里再挡一次——
+# 让"口令不能被提交"这件事在离它最近的地方也看得见。
+.env

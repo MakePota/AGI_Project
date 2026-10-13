@@ -122,6 +122,7 @@ checkpointer**；业务数据（用户、任务列表）在 **Server 的数据�
 | 换行符基线 | ✅ 已实测 | 根 `.gitattributes` 固定入库 LF；实测全仓 0 个 CRLF，不再依赖各机器的 `core.autocrlf` |
 | **图像理解（千问）** | ✅ 已实测 | 端到端：读一张写着随机数字的图，最终回复与图中数字**一致**；Key 缺失时正确**停下**（不进重规划）；只读任务未受影响 → ADR 0012 |
 | **对外 HTTP 服务（Phase 1）** | ✅ 已实测 | `uv run agi-agent-api` 起服务，4 个端点；curl 实测：建任务 → 停下等人批准 → **断掉一切事件流后仍能查到审批、从另一条连接提交并跑完**；404/409 语义正确；任务串行（单测断言并发数恒为 1）→ ADR 0014/0015 |
+| **业务服务 AGI_Server（Phase 2）** | ✅ 已实测 | Java 21 + Spring Boot 4.1.1 + MySQL：任务 CRUD、JPA 持久化、Flyway 迁移、参数校验、统一异常、SSE 转发。**用与 Phase 1 同一个脚本端到端验过**（事件序列一致）；实测按需对齐（`received` → 走一次详情 → `completed`）、中文按 utf8mb4 正确存取；10 个 Java 单测不连库不联网 |
 
 关键入口（完整清单以实际目录为准，目录职责见 `AGI_Agent/docs/architecture.md`）：
 
@@ -164,7 +165,8 @@ AGI_Agent/
 - 根 `.gitignore` 覆盖 `.env`、`.secrets/`、`.idea/`（均已实测 `git check-ignore` 生效）
 - `AGI_Client` 已不再是空目录（2026-10-13 起由用户在 HBuilderX 中创建为 uni-app 项目，
   Vue 3 + 默认模板；`unpackage/` 构建产物由它自带的 `.gitignore` 忽略）
-- `AGI_Server` **仍是空目录**，靠 `.gitkeep` 占位（Phase 2 才动）
+- `AGI_Server` 已不再是空目录（2026-10-13 起是 Java 21 + Spring Boot 4.1.1 + Maven
+  的实现，有自己的 `README.md`；MySQL 由它目录下的 `docker-compose.yml` 跑）
 
 变更说明：`AGI_Agent` 原先是被 `uv init --package` 自动初始化的独立嵌套 Git 仓库，并有独立远端
 `MakePota/AGI_Agent`。经用户明确授权，该嵌套 `.git` 已删除且**历史不保留**，改为在
@@ -268,15 +270,24 @@ AGI_Agent/
     顺带修掉一个**把成功报成失败**的既有缺陷：reviewer 输出的 JSON 里带未转义双引号
     导致解析失败，于是"任务实际做成了却报 failed"；现在提示词先堵住这种坏法，
     失败时带着解析器原话重试一次（详见 `providers/llm/structured.py`）。
+12. ✅ **业务服务 `AGI_Server`（Phase 2，2026-10-13）**：Java 21 + Spring Boot 4.1.1 +
+    Maven + MySQL。任务 CRUD、JPA、Flyway 迁移、参数校验、`ProblemDetail` 统一异常、
+    SSE 薄转发。**验收用的是与 Phase 1 完全相同的那个烟测脚本**
+    （`AGI_Agent/scripts/smoke_api.py --base-url http://127.0.0.1:8090/api`），
+    连事件序列都一致——这正是"接口形状保持一致"这条要求的实测。
+    三个踩到的坑记在 `AGI_Server/README.md`：Boot 4 把 Flyway 自动配置拆成独立模块
+    （只加 `flyway-core` 会**静默不执行迁移**）、SSE 的 `data:` 后空格是可选的、
+    Spring Boot 默认绑 `0.0.0.0`（无认证的服务必须显式改绑 127.0.0.1）。
 
-**下一步是 Phase 2：`AGI_Server`（Java 21 + Spring Boot 3 + Maven + MySQL），
-带完整的任务 CRUD**。之后才是 Phase 3（`AGI_Client` 页面）。分三期是因为
-**每期都能独立验证**——Phase 1 已用 curl 验完，Phase 2 同样只用 curl。
+**下一步是 Phase 3：`AGI_Client` 的页面**（uni-app / Vue 3，骨架已建好但**代码一行未动**）。
+现在两个后端都通了，接口形状已固定，可以照着写：输入框 → 事件列表 → 审批面板
+（展示 `summary` **与 steps 的参数**）。**刷新页面能重新接上正在跑的任务**，
+这是"中断是可查询状态"带来的能力，值得专门验一下。
 
-Phase 2 的**环境已就绪**（2026-10-13 实测）：本机 Java **21.0.7 LTS** + Maven **3.9.10**；
-MySQL **8.0.44** 由 `AGI_Server/docker-compose.yml` 跑在 `127.0.0.1:3307`（刻意避开
-3306 与其他项目冲突），密码在已被 gitignore 忽略的 `AGI_Server/.env` 里、**不写进 compose**。
-验证方式是容器 healthy + 应用账号实连（字符集 `utf8mb4`）。
+环境备忘：本机 Java **21.0.7** + Maven **3.9.10**；MySQL **8.0.44** 由
+`AGI_Server/docker-compose.yml` 跑在 `127.0.0.1:3307`（刻意避开 3306 与其他项目冲突），
+密码在已被 gitignore 忽略的 `AGI_Server/.env` 里、**不写进 compose**。
+`~/.m2/settings.xml` 已配阿里云镜像（否则首次构建要下上百 MB）。
 `AGI_Client` 的骨架用户已经建好（uni-app / Vue 3），**先不要动它的代码**，
 等 Phase 2 的接口形状定下来再写页面，免得返工。
 

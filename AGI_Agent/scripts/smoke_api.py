@@ -85,8 +85,12 @@ def fetch_events(base: str, task_id: str) -> list[dict]:
     events: list[dict] = []
     with urllib.request.urlopen(f"{base}/tasks/{task_id}/events", timeout=30) as resp:
         for line in resp.read().decode("utf-8").splitlines():
-            if line.startswith("data: "):
-                payload = line[len("data: ") :].strip()
+            # 按 "data:" 判断，而不是 "data: "（带空格）。
+            # SSE 规范里冒号后那个空格是**可选**的：FastAPI 会写 "data: {...}"，
+            # Spring 的 SseEmitter 写 "data:{...}"。写死带空格的版本，会在换一个
+            # 实现时变成"事件一条都收不到"——实测踩过一次，而且现象很像是服务端没发。
+            if line.startswith("data:"):
+                payload = line[len("data:") :].strip()
                 if payload and payload != "{}":
                     events.append(json.loads(payload))
     return events
