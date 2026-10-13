@@ -1,0 +1,52 @@
+# AGI_Server 目前唯一的基础设施依赖：MySQL。
+#
+# **为什么用 Docker 而不是在 Windows 上装服务**：同一份 compose 以后能直接搬到
+# 服务器上（用户的目标之一就是练部署），而且不在本机留下难以清理的数据目录与
+# 系统服务。
+#
+# **密码不写在这里**：compose 会自动读取同目录下的 `.env`（已被 .gitignore 忽略）。
+# 把 `.env.example` 复制成 `.env` 并改掉密码即可。仓库里不放任何真实凭据——
+# 这条与 AGI_Agent 的 `.env` 是同一个规矩。
+#
+# **端口刻意用 3307 而不是 3306**：本机可能同时跑着别的项目的数据库
+# （实际上 `dev_assistant_postgres` 就占着 5432）。固定一个不常用的宿主端口，
+# 能避免"今天连上了、明天连到别人的库"这类只在重启后才暴露的事故。
+#
+# 启动 / 停止：
+#   docker compose -f AGI_Server/docker-compose.yml up -d
+#   docker compose -f AGI_Server/docker-compose.yml down
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: agi_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请先在 AGI_Server/.env 里设置}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-agi}
+      MYSQL_USER: ${MYSQL_USER:-agi}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请先在 AGI_Server/.env 里设置}
+      TZ: Asia/Shanghai
+    ports:
+      # 只绑 127.0.0.1：数据库没有理由对局域网开放。要异地访问应当是
+      # "连到服务器上的实例"，而不是把开发机的库暴露出去。
+      - "127.0.0.1:3307:3306"
+    command:
+      # utf8mb4 不是可选项：MySQL 里的 "utf8" 其实是 utf8mb3（最多三字节），
+      # 存 emoji 会直接报错。中文正文、用户输入都可能带四字节字符。
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    volumes:
+      - agi_mysql_data:/var/lib/mysql
+    healthcheck:
+      # 有健康检查，Spring Boot 启动时才能"等库真的可用了再连"，
+      # 而不是靠 sleep 猜时间。
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  # 具名卷：数据独立于容器生命周期，`docker compose down` 不会连数据一起删掉
+  # （要删数据得显式 `down -v`，这是个有意的门槛）。
+  agi_mysql_data:
