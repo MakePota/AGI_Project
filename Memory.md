@@ -36,7 +36,17 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 | `AGI_Server` | 用户、鉴权、任务持久化、对外 API 与服务协调。 |
 | `AGI_Agent` | 任务理解、计划、工具编排、执行状态和安全策略。 |
 
-重要边界：`AGI_Agent` 当前不承担 HTTP API、用户认证或客户端页面，避免与 `AGI_Server`、`AGI_Client` 职责重叠。
+重要边界（**2026-10-13 修订**，见 ADR 0014）：
+
+> `AGI_Agent` 提供**内部服务 API**（无认证、无界面，供 `AGI_Server` 调用）；
+> 仍然**不**承担用户认证、不提供客户端页面。
+
+修订前的表述是「不承担 HTTP API」——那条在服务化之后已经不成立（Java 侧要调它）。
+但**职责重叠的红线没有变**：认证与界面仍然只属于 Server 与 Client。
+
+**权威数据分属不同层**：执行状态（计划、工具调用、审批记录）权威在 **Agent 的
+checkpointer**；业务数据（用户、任务列表）在 **Server 的数据库**。Server 存的是镜像，
+两者不一致时**以 Agent 为准**，且 Server 绝不自己推断任务状态。
 
 ## 3. 已确认的协作与安全守则
 
@@ -60,7 +70,7 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 | 想了解 | 去哪 |
 | --- | --- |
 | 项目整体架构、技术栈、目录职责 | `AGI_Agent/docs/architecture.md` |
-| 为什么引入某个依赖、为什么否掉某个方案 | `AGI_Agent/docs/decisions/`（ADR，13 篇） |
+| 为什么引入某个依赖、为什么否掉某个方案 | `AGI_Agent/docs/decisions/`（ADR，16 篇） |
 | 某个功能怎么运转、要改它先看哪里 | `AGI_Agent/docs/features/` |
 
 几条**约束性质**的结论。先知道结论，需要细节再点进 ADR：
@@ -81,6 +91,11 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
   模型档位由「工具名 → 槽位 → `config.toml`」两级静态绑定，**不由模型自报** → ADR 0012
 - **不做微信（个人版）自动化**：UIA 是唯一合规路线，但它的地基正被微信 4.x 拆掉，
   且撞腾讯 ToS；各条路线为何出局见 ADR 0013
+- **拆成 Server 与 Agent 两个独立服务**，Agent 提供内部服务 API（边界见 §2）→ ADR 0014
+- **「等待批准」是可查询的状态，不是挂着的连接**：断线、刷新、换客户端都不丢；
+  事件带单调 `seq`，跨服务契约只有三个形状（内部模型不外传）→ ADR 0015
+- **服务化选型**：Java 21 + Spring MVC(`SseEmitter`) + MySQL + uni-app + SSE；
+  推迟的组件（MongoDB / Redis / Qdrant）各自写明触发条件，不许以"以后可能用得上"进来 → ADR 0016
 - `graph`（怎么思考）/ `tools`（能做什么）/ `policies`（允许做什么）三者必须分离 → `architecture.md`
 
 ## 5. 当前实际进度
@@ -102,10 +117,11 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 | 「结果不确定」的写操作不再被重试 | ✅ 已修复并回归 | 一次复核失败曾让购物车出现 3 份同一游戏 → ADR 0010 |
 | 网络/登录问题当场停下并给出下一步 | ✅ 已实测 | 45 秒静默等待 → 8.6 秒明确报错；登录过期会在**点击前**被发现 → ADR 0011 |
 | CLI 过程输出（流式） | ✅ 已实测 | 工具调用在**开始前**就打印进度，不再是一个不动的窗口 |
-| 单元测试 | ✅ 131 个 | `uv run pytest`，不消耗任何 API 额度 |
+| 单元测试 | ✅ 150 个 | `uv run pytest`，不消耗任何 API 额度 |
 | 代码质量检查 | ✅ 已实测 | `uv run ruff check .` 全绿（首次开启时实测 786 条 → 逐条判定后修掉 8 条真问题） |
 | 换行符基线 | ✅ 已实测 | 根 `.gitattributes` 固定入库 LF；实测全仓 0 个 CRLF，不再依赖各机器的 `core.autocrlf` |
 | **图像理解（千问）** | ✅ 已实测 | 端到端：读一张写着随机数字的图，最终回复与图中数字**一致**；Key 缺失时正确**停下**（不进重规划）；只读任务未受影响 → ADR 0012 |
+| **对外 HTTP 服务（Phase 1）** | ✅ 已实测 | `uv run agi-agent-api` 起服务，4 个端点；curl 实测：建任务 → 停下等人批准 → **断掉一切事件流后仍能查到审批、从另一条连接提交并跑完**；404/409 语义正确；任务串行（单测断言并发数恒为 1）→ ADR 0014/0015 |
 
 关键入口（完整清单以实际目录为准，目录职责见 `AGI_Agent/docs/architecture.md`）：
 
@@ -120,6 +136,7 @@ AGI_Agent/
     ├── config.py                # 配置与常量读取
     ├── schemas/                 # 稳定数据契约（6 个：task/plan/tool_call/approval/event/review）
     ├── graph/                   # builder / state / checkpoint / nodes
+    ├── api/                     # 对外 HTTP 接口（FastAPI）：contract / runner / app
     ├── tools/                   # registry + errors + builtin(files, steam, vision, fake)
     ├── providers/llm/           # 供应商注册表 + structured.py
     └── policies/                # risk.py
@@ -145,14 +162,18 @@ AGI_Agent/
 - 远端：`origin` → `https://github.com/MakePota/AGI_Project.git`（私密仓库）
 - 首次提交：`654fd4e` "chore: initialize AGI_Project monorepo (agent, client, server)"
 - 根 `.gitignore` 覆盖 `.env`、`.secrets/`、`.idea/`（均已实测 `git check-ignore` 生效）
-- `AGI_Client` 与 `AGI_Server` 目前是空目录，靠 `.gitkeep` 占位
+- `AGI_Client` 已不再是空目录（2026-10-13 起由用户在 HBuilderX 中创建为 uni-app 项目，
+  Vue 3 + 默认模板；`unpackage/` 构建产物由它自带的 `.gitignore` 忽略）
+- `AGI_Server` **仍是空目录**，靠 `.gitkeep` 占位（Phase 2 才动）
 
 变更说明：`AGI_Agent` 原先是被 `uv init --package` 自动初始化的独立嵌套 Git 仓库，并有独立远端
 `MakePota/AGI_Agent`。经用户明确授权，该嵌套 `.git` 已删除且**历史不保留**，改为在
 `E:\AGI_Project` 根目录重建为单一 Monorepo。旧的 `MakePota/AGI_Agent` 仓库由用户自行处理。
 
-依赖结构上刻意**未**引入 uv workspace：`AGI_Client` 未必是 Python 项目，且 `AGI_Server` 尚无代码。
-等 server 有真实 Python 代码后再讨论是否共享 lockfile。
+**不引入 uv workspace**（这个问题在 2026-10-13 有了确定的答案）：`AGI_Server` 用 Java、
+`AGI_Client` 用 uni-app，只有 `AGI_Agent` 是 Python。共享 Python lockfile 的前提
+（多个 Python 子项目）根本不成立。`AGI_Server` 要调 Agent 时走 HTTP，
+而不是把 Python 包当依赖引进去。
 
 ## 6. 当前任务
 
@@ -240,8 +261,19 @@ AGI_Agent/
     顺带修掉一个既有漏洞：审批摘要原先只显示模型写的描述、不显示**参数**，
     于是看不出要把哪个文件发出去。
 
-**当前功能开发的下一个目标待定。** 微信（第 8 条）已关闭；尚未动的方向包括
-`AGI_Client` / `AGI_Server` 的骨架、以及 §4 里被推迟的 MCP Client（需先出现真实需求）。
+11. ✅ **Agent 对外服务化 Phase 1（2026-10-13）**：`AGI_Agent` 现在是一个可被调用的
+    HTTP 服务（FastAPI，4 个端点：建任务 / 查状态 / SSE 事件流 / 提交审批）。
+    **核心设计是「等待批准」为可查询状态**（ADR 0015）——实测：断开所有事件流之后
+    仍能查到审批请求、并从另一条连接提交决定让任务跑完。
+    顺带修掉一个**把成功报成失败**的既有缺陷：reviewer 输出的 JSON 里带未转义双引号
+    导致解析失败，于是"任务实际做成了却报 failed"；现在提示词先堵住这种坏法，
+    失败时带着解析器原话重试一次（详见 `providers/llm/structured.py`）。
+
+**下一步是 Phase 2：`AGI_Server`（Java 21 + Spring Boot 3 + Maven + MySQL），
+带完整的任务 CRUD**。之后才是 Phase 3（`AGI_Client` 页面）。分三期是因为
+**每期都能独立验证**——Phase 1 已用 curl 验完，Phase 2 同样只用 curl。
+`AGI_Client` 的骨架用户已经建好（uni-app / Vue 3），**先不要动它的代码**，
+等 Phase 2 的接口形状定下来再写页面，免得返工。
 
 **已知遗留（不阻塞，但别忘了）**：
 

@@ -31,7 +31,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
 #: LangGraph checkpointer 的 SQLite 文件位置；不支持部署多副本共享。
-CHECKPOINT_DB = PROJECT_ROOT / "checkpoints.db"
+#: 可用环境变量 ``AGI_CHECKPOINT_DB`` 覆盖——服务化之后，长驻服务不该把运行时状态
+#: 写在仓库目录里：那里同时是本地文件工具的沙箱，混在一起会让"哪些文件是产物、
+#: 哪些是代码"变得难以判断，也更容易被误提交。
+_checkpoint_override = os.environ.get("AGI_CHECKPOINT_DB")
+CHECKPOINT_DB = (
+    Path(_checkpoint_override).expanduser()
+    if _checkpoint_override
+    else PROJECT_ROOT / "checkpoints.db"
+)
 
 
 def _allowed_roots() -> list[Path]:

@@ -58,6 +58,9 @@
 | [0011](0011-halt-on-unmet-precondition.md) | 前提条件不满足（代理没开、登录过期）时停下，不进重规划 | 已采用 |
 | [0012](0012-vision-via-dashscope.md) | 图像理解走千问，模型档位由工具注册表与配置决定 | 已采用 |
 | [0013](0013-no-wechat-automation.md) | 不做微信（个人版）自动化（含各条路线的出局原因） | 已决定（可重审） |
+| [0014](0014-split-server-and-agent.md) | 拆分为 Server 与 Agent，Agent 提供内部服务 API | 已采用 |
+| [0015](0015-interrupt-as-queryable-state.md) | 「等待批准」是可查询的状态，不是挂着的连接 | 已采用 |
+| [0016](0016-server-stack-selection.md) | 服务化选型：Java/Spring、MySQL、uni-app、SSE（含推迟组件的触发条件） | 已采用 |
 
 > `AGI_Client`、`AGI_Server` 将来各自建立自己的 `docs/decisions/`。
 > 只有真正跨子项目的决策才需要提到根目录，不要为了统一而统一。

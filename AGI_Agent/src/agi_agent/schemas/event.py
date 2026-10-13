@@ -26,6 +26,11 @@ class EventType(StrEnum):
     REVIEW_REJECTED = "review_rejected"
     TASK_COMPLETED = "task_completed"
     TASK_FAILED = "task_failed"
+    #: 任务**停下来等人**：可能是"结果不确定，需要核实"（ADR 0010），
+    #: 也可能是"前提条件不满足，需要修环境"（ADR 0011）。
+    #: 它**不是失败**，所以不能并进 TASK_FAILED——把两者混为一谈正是那两篇 ADR
+    #: 明确禁止的。任务被用户拒绝批准则走 TASK_FAILED，原因在 payload 里。
+    TASK_NEEDS_HUMAN = "task_needs_human"
 
 
 class Event(SchemaModel):
