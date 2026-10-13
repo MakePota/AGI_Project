@@ -42,7 +42,7 @@ runtime
 | 数据建模与配置 | `Pydantic`、`pydantic-settings` | 角色 → 模型绑定写在 `config.toml` |
 | 浏览器自动化 | `Playwright` | 见 [ADR 0005](decisions/0005-playwright-for-browser-automation.md) |
 | 测试 | `pytest` | `tests/unit/` 不消耗 API 额度 |
-| 代码质量 | `Ruff` | **尚未安装** |
+| 代码质量 | `Ruff` | 已装为 dev 依赖，`uv run ruff check .`。规则集取舍（含为何关掉中文标点误报）写在 `pyproject.toml` 注释里；**只做检查、不做格式化** |
 | 跨工具协议 | MCP Client | **尚未接入**，时机见 [ADR 0006](decisions/0006-external-capability-policy.md) |
 | 可观测性 | `Langfuse` | **尚未接入**，等出现值得观察的对象再引入 |
 

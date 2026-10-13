@@ -42,4 +42,5 @@ Steam 工具（搜索 / 查价 / 购物车增删查，首个 `WRITE` 风险能�
 ```bash
 uv run agi-agent "你好，请用一句话介绍自己"
 uv run pytest
+uv run ruff check .        # 静态检查；规则集与取舍见 pyproject.toml 注释
 ```

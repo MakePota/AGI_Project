@@ -16,13 +16,10 @@ LangChain 的默认路径在 DeepSeek 上不可用，实测遇到两个限制：
 from __future__ import annotations
 
 import json
-from typing import TypeVar
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AnyMessage, SystemMessage
 from pydantic import BaseModel
-
-T = TypeVar("T", bound=BaseModel)
 
 _HINT = (
     "你必须只输出一个 JSON 对象，不含任何解释、前后缀或代码块标记。\n"
@@ -30,7 +27,10 @@ _HINT = (
 )
 
 
-def invoke_structured(
+# 泛型参数用 PEP 695 的内联写法（`[T: BaseModel]`）而不是模块级 ``TypeVar``：
+# 类型变量只在这一个函数里用得到，内联写法的作用域就是它该有的范围。
+# 代价是需要 Python 3.12+，而本项目 requires-python 已经锁死 >=3.12。
+def invoke_structured[T: BaseModel](
     model: BaseChatModel, schema: type[T], messages: list[AnyMessage]
 ) -> T:
     """调用模型并返回 ``schema`` 类型的结构化结果。"""

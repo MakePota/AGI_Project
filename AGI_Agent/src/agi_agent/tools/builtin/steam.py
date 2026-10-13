@@ -36,8 +36,8 @@ from collections.abc import Callable, Iterator
 from typing import Any
 from urllib.parse import quote
 
-from playwright.sync_api import Page, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import Page, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from pydantic import BaseModel, Field
 
@@ -502,7 +502,11 @@ def _fetch_app_details(appid: str) -> dict[str, Any]:
 
     try:
         raw = opener.open(request, timeout=_PRICE_TIMEOUT_S).read().decode("utf-8")
-    except Exception as exc:  # noqa: BLE001  网络层什么都可能抛
+    except Exception as exc:
+        # 网络层什么都可能抛（DNS、代理、TLS、超时、编码），一律转成 ToolError 交上层分类。
+        # 这里**刻意不加** BLE001 的 noqa 抑制标记：Ruff 只在处理块「吞掉」异常时才报 BLE001，
+        # 而本块把异常重新抛出，所以那条抑制标记是死的（RUF100 会反过来报它多余）。
+        # 措辞绕开「井号 + noqa」的写法是故意的：Ruff 会把注释里的那种字样也当成真指令来解析。
         raise ToolError(
             f"查询价格失败（appid={appid}）：{type(exc).__name__}: {exc}\n"
             f"当前代理：BROWSER_PROXY={BROWSER_PROXY or '（未设置）'}。"
@@ -751,7 +755,10 @@ register(
 register(
     ToolSpec(
         name="steam.add_to_cart",
-        description="在 Steam 商店把指定游戏加入购物车；已在购物车中则不会重复添加；不涉及结账与支付",
+        description=(
+            "在 Steam 商店把指定游戏加入购物车；已在购物车中则不会重复添加；"
+            "不涉及结账与支付"
+        ),
         risk=RiskLevel.WRITE,
         parameters=GameArgs,
         func=add_to_cart,

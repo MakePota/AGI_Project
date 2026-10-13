@@ -14,7 +14,6 @@ from langchain_openai import ChatOpenAI
 from agi_agent.config import ModelSpec, settings
 from agi_agent.schemas.common import Role
 
-
 # 供应商注册表：供应商名 -> LangChain ChatModel 实现。
 # "openai" 走 OpenAI 兼容端点，可覆盖 ChatGPT / DeepSeek / Kimi / 智谱 / 千问。
 # 接入 Claude 时在此补 "anthropic": ChatAnthropic（需另装 langchain-anthropic）。

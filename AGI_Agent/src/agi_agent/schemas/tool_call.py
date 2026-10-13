@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import Field
 
-from agi_agent.schemas.common import RiskLevel, SchemaModel, new_id, utc_now
+from agi_agent.schemas.common import RiskLevel, SchemaModel, new_id
 
 
 class ToolCallStatus(StrEnum):

@@ -91,8 +91,12 @@ class Settings(BaseSettings):
         settings_cls: type[BaseSettings],
         init_settings: PydanticBaseSettingsSource,
         env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
+        # 下面两个源本项目**刻意不用**（.env 已在模块顶部由 load_dotenv 读进
+        # os.environ，再挂一个 dotenv 源会让同一份配置在链条里出现两次）。
+        # 但参数不能删：这是 pydantic-settings 规定的固定签名，父类按位置全量传入，
+        # 少一个就 TypeError。所以这里必须显式标注豁免。
+        dotenv_settings: PydanticBaseSettingsSource,  # noqa: ARG003
+        file_secret_settings: PydanticBaseSettingsSource,  # noqa: ARG003
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         """优先级：显式传参 > 环境变量 > config.toml。"""
         return (init_settings, env_settings, TomlConfigSettingsSource(settings_cls))

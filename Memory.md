@@ -2,7 +2,7 @@
 
 > 用途：为人类开发者和不同 AI 工具提供稳定的项目上下文与任务交接。
 >
-> 最后更新：2026-10-12
+> 最后更新：2026-10-13
 >
 > 约束：本文档不记录 API Key、密码、Token、真实账号信息、私有 URL 或其他敏感数据；其中的状态描述应以源码、Git 状态和实际验证结果为准。
 
@@ -99,6 +99,8 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 | 网络/登录问题当场停下并给出下一步 | ✅ 已实测 | 45 秒静默等待 → 8.6 秒明确报错；登录过期会在**点击前**被发现 → ADR 0011 |
 | CLI 过程输出（流式） | ✅ 已实测 | 工具调用在**开始前**就打印进度，不再是一个不动的窗口 |
 | 单元测试 | ✅ 92 个 | `uv run pytest`，不消耗任何 API 额度 |
+| 代码质量检查 | ✅ 已实测 | `uv run ruff check .` 全绿（首次开启时实测 786 条 → 逐条判定后修掉 8 条真问题） |
+| 换行符基线 | ✅ 已实测 | 根 `.gitattributes` 固定入库 LF；实测全仓 0 个 CRLF，不再依赖各机器的 `core.autocrlf` |
 
 关键入口（完整清单以实际目录为准，目录职责见 `AGI_Agent/docs/architecture.md`）：
 
@@ -122,13 +124,12 @@ AGI_Agent/
 
 ### 尚未完成 / 未执行
 
-- **`Ruff` 未安装**（`langgraph`、`langgraph-checkpoint-sqlite`、`playwright` 均已安装）。
 - **微信（个人版 UI 自动化）尚未开始**，功能开发的下一步就是它。详见 §6。
 - **MCP Client 层有意未实现**：目前没有出现「需要一个成熟第三方 MCP Server」的真实需求。
   判据见 ADR 0006。
 - `langgraph.json` 未创建；当前由自带 `cli.py` 驱动，暂不需要，理由见 `AGI_Agent/docs/architecture.md`。
-- **尚未编写 `.gitattributes`**：换行符依赖 `core.autocrlf`，跨平台协作前应固定。
-  已观察到实际影响：Windows 下 git 反复提示 LF→CRLF 转换警告。
+- `Ruff` **只做检查、不做格式化**（未启用 `ruff format`）：格式化会重排全部源文件，
+  应单独一次提交，不要混进功能改动。规则集取舍写在 `AGI_Agent/pyproject.toml` 的注释里。
 
 ### 仓库结构（2026-10-12 起改为 Monorepo）
 
@@ -163,8 +164,9 @@ AGI_Agent/
 **明确不装**：`langchain`（meta 包，本项目用 LangGraph 编排，不需要）、
 `langchain-deepseek`（对 `deepseek-flash` 的覆盖未经核实，而 `ChatOpenAI` + `base_url` 路径已核实）。
 
-后续按触发条件再装：`langfuse`（出现值得观察的对象时）、`langchain-anthropic`（接入 Claude 时）、
-`Ruff`（开始做代码质量检查时）。
+后续按触发条件再装：`langfuse`（出现值得观察的对象时）、`langchain-anthropic`（接入 Claude 时）。
+
+`Ruff` 已于 2026-10-13 装为 dev 依赖并跑通（见 §6 下一步第 9 条）。
 
 ### 安全事项（重要）
 
@@ -201,15 +203,29 @@ AGI_Agent/
    实施前仍需先做守则 §2 的调研（WeChat 的 MCP Server 与开源实现）。
    **注意**：微信发消息**无法幂等**（没有"已经发过了"这种状态可查），
    所以 ADR 0010/0011 的那套"停下"机制在这里是必需的，不能只靠幂等兜底。
-9. 尚未安装 `Ruff`。
+9. ✅ **代码质量与换行符基线（2026-10-13）**：装上 `Ruff` 并定下规则集，实测从
+   786 条收敛到 0——其中 756 条是「中文全角标点」误报（`RUF001/002/003`），
+   **正确做法是关掉规则而不是改代码**，因为本项目规定注释用中文。真问题只有 8 条，
+   已全部修掉。同日加入根 `.gitattributes` 固定入库 LF。
+   两条踩出来的坑记在 `AGI_Agent/pyproject.toml` 的注释里：RUF100 的自动修复会
+   把整行注释**连同中文解释一起删掉**（故设为只报不修）；注释里写出「井号 + noqa」
+   字样会被 Ruff 当成真指令解析。**未启用 `ruff format`**，理由见 §5 末尾。
+
+**当前功能开发的下一个目标仍是上面的第 8 条：微信。**
 
 **已知遗留（不阻塞，但别忘了）**：
 
-- `steam.remove_from_cart` 的「一次清除多份同名条目」路径**尚未在真实购物车上验证过**
-  （加购已幂等，Agent 自己造不出重复条目了）。见
-  [功能文档](AGI_Agent/docs/features/steam-tools.md) 的「已知局限」。
 - `PRECONDITION_FAILED` 与不确定结局目前共用 `TaskStatus.NEEDS_HUMAN`，
   用户可见的措辞区分了，状态枚举没区分。需要按状态统计失败类型时再拆。
+
+**已关闭的遗留（不要再花时间验证）**：
+
+- ~~`steam.remove_from_cart` 的「一次清除多份同名条目」路径未经真实购物车验证。~~
+  **结论：不用管了。** 用户于 2026-10-13 判定：重复条目已不会由 Agent 产生
+  （加购已幂等），真出现也不影响正确性，不值得再花时间验证。
+  代码里的多轮循环 + 复核**保持现状**（防御性写法，不是待办）。
+  完整口径（含与 ADR 0010 那次事故的观察差异）见
+  [功能文档](AGI_Agent/docs/features/steam-tools.md) 的「已知局限」——**已同步，无需再改**。
 
 ## 7. 新 AI 工具的启动与交接规则
 
