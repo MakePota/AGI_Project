@@ -272,6 +272,11 @@ AGI_Agent/
 **下一步是 Phase 2：`AGI_Server`（Java 21 + Spring Boot 3 + Maven + MySQL），
 带完整的任务 CRUD**。之后才是 Phase 3（`AGI_Client` 页面）。分三期是因为
 **每期都能独立验证**——Phase 1 已用 curl 验完，Phase 2 同样只用 curl。
+
+Phase 2 的**环境已就绪**（2026-10-13 实测）：本机 Java **21.0.7 LTS** + Maven **3.9.10**；
+MySQL **8.0.44** 由 `AGI_Server/docker-compose.yml` 跑在 `127.0.0.1:3307`（刻意避开
+3306 与其他项目冲突），密码在已被 gitignore 忽略的 `AGI_Server/.env` 里、**不写进 compose**。
+验证方式是容器 healthy + 应用账号实连（字符集 `utf8mb4`）。
 `AGI_Client` 的骨架用户已经建好（uni-app / Vue 3），**先不要动它的代码**，
 等 Phase 2 的接口形状定下来再写页面，免得返工。
 

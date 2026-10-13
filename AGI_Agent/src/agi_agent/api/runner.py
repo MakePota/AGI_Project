@@ -274,10 +274,13 @@ class TaskRunner:
             elif node == "planner":
                 plan = update.get("plan")
                 steps = list(getattr(plan, "steps", []) or [])
-                # 首次规划与重规划要能分辨：`Plan.revision` 才是权威信号
-                # （reviewer 打回后 planner 带着更大的 revision 重跑）。
-                # 不要用 record.status 去猜——重规划时它并不是 PLANNING。
-                revised = int(getattr(plan, "revision", 0) or 0) > 0
+                # 首次规划与重规划要能分辨。`Plan.revision` 是权威信号，但要注意
+                # **它从 1 开始**（planner 里是 `state["revision"] + 1`），
+                # 所以"首次"是 `== 1` 而不是 `> 0`——写成 `> 0` 会把首次规划
+                # 误报成"修订"，实测踩到过。
+                # 也不要用 record.status 去猜：重规划时它并不是 PLANNING。
+                revision = int(getattr(plan, "revision", 0) or 0)
+                revised = revision > 1
                 self._emit(
                     record,
                     EventType.PLAN_REVISED if revised else EventType.PLAN_CREATED,

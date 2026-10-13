@@ -27,6 +27,7 @@ from agi_agent.schemas import (
     PlanStep,
     RiskLevel,
     Task,
+    TaskKind,
     TaskStatus,
     ToolCall,
     ToolCallStatus,
@@ -136,9 +137,19 @@ _APPROVAL_VALUE = {
 }
 
 
-def _plan_update() -> dict[str, Any]:
+def _plan_update(revision: int = 1) -> dict[str, Any]:
+    """一次规划产出，**按 LangGraph 的真实形状包装**：`{节点名: 节点返回的 dict}`。
+
+    `revision` 默认给 1 而不是 0——planner 实际就是从 1 开始的
+    （`state["revision"] + 1`）。测试里自己编一个 0 就测不出真实行为。
+
+    注意这层包装不是装饰：早先的假图直接给 `{"plan": ...}`，于是节点名变成了
+    `"plan"`，`_on_update` 里所有按节点名分派的逻辑**一个分支都没被走到**，
+    测试却全绿。这个教训值得写在这里——**假图必须模仿真形状，否则测试只是在测自己**。
+    """
     plan = Plan(
         task_id="t",
+        revision=revision,
         steps=[
             PlanStep(
                 index=0,
@@ -149,7 +160,11 @@ def _plan_update() -> dict[str, Any]:
         ],
         rationale="用户要求加购",
     )
-    return {"plan": plan}
+    return {"planner": {"plan": plan}}
+
+
+def _triage_update(kind: str = "task") -> dict[str, Any]:
+    return {"triage": {"task": Task(goal="买游戏", kind=TaskKind(kind))}}
 
 
 def _executor_update() -> dict[str, Any]:
@@ -162,7 +177,7 @@ def _executor_update() -> dict[str, Any]:
         status=ToolCallStatus.SUCCEEDED,
         result="已把「Elden Ring」加入购物车。",
     )
-    return {"tool_calls": [call]}
+    return {"executor": {"tool_calls": [call]}}
 
 
 def _done_values(status: TaskStatus, reply: str | None = None) -> dict[str, Any]:
@@ -178,10 +193,20 @@ def _done_values(status: TaskStatus, reply: str | None = None) -> dict[str, Any]
 
 
 def test_completed_task_records_result_and_event(runner_factory) -> None:
+    """一次完整任务要产出可读的事件序列——**每个节点都被翻译对**。
+
+    这条同时是对 `_on_update` 分派的覆盖：它要求 triage / planner / executor
+    三个节点的产出都真的变成了对应事件，而不是因为节点名对不上被静默跳过。
+    """
     graph = _FakeGraph(
         [
             _Round(
-                [("custom", "  → 正在调用 steam.add_to_cart …"), ("updates", _executor_update())],
+                [
+                    ("updates", _triage_update()),
+                    ("updates", _plan_update()),
+                    ("custom", "  → 正在调用 steam.add_to_cart …"),
+                    ("updates", _executor_update()),
+                ],
                 _done_values(TaskStatus.COMPLETED, "已加入购物车"),
             )
         ]
@@ -195,8 +220,19 @@ def test_completed_task_records_result_and_event(runner_factory) -> None:
     assert final.result == "已加入购物车"
 
     types = [event.type for event in runner.events_since(ref.task_id)]
-    assert EventType.TASK_RECEIVED in types
-    assert types[-1] is EventType.TASK_COMPLETED
+    assert types == [
+        EventType.TASK_RECEIVED,
+        EventType.ROUTED,
+        EventType.PLAN_CREATED,
+        EventType.TOOL_STARTED,  # 来自节点的 custom 进度推送
+        EventType.TOOL_FINISHED,
+        EventType.TASK_COMPLETED,
+    ]
+    # 工具事件必须带上参数与结果——列表页要显示"调了什么、结果如何"。
+    finished = runner.events_since(ref.task_id)[-2]
+    assert finished.payload["tool"] == "steam.add_to_cart"
+    assert finished.payload["arguments"] == {"game": "Elden Ring"}
+    assert "Elden Ring" in finished.payload["result"]
 
 
 def test_needs_human_is_not_reported_as_failure(runner_factory) -> None:
@@ -352,6 +388,34 @@ def test_events_have_monotonic_seq_and_support_incremental_read(runner_factory) 
     tail = runner.events_since(ref.task_id, since=2)
     assert all(event.seq >= 2 for event in tail)
     assert len(tail) == len(all_events) - 2
+
+
+def test_first_plan_is_created_while_a_redo_is_revised(runner_factory) -> None:
+    """首次规划不能被报成「修订」。
+
+    踩过的坑：`Plan.revision` **从 1 开始**（planner 里是 `state["revision"] + 1`），
+    我最初用 `revision > 0` 判断"是否修订"，结果第一次规划也被说成修订——
+    真实的事件序列里确实这样出现过。对外事件说错话，前端就会显示错的东西。
+    """
+    graph = _FakeGraph(
+        [
+            _Round(
+                [
+                    ("updates", _plan_update(revision=1)),  # 首次
+                    ("updates", _plan_update(revision=2)),  # 被驳回后重来
+                ],
+                _done_values(TaskStatus.COMPLETED, "done"),
+            )
+        ]
+    )
+    runner = runner_factory(graph)
+    ref = runner.submit("干活")
+    assert _wait(lambda: runner.is_finished(ref.task_id))
+
+    types = [event.type for event in runner.events_since(ref.task_id)]
+    assert types.count(EventType.PLAN_CREATED) == 1
+    assert types.count(EventType.PLAN_REVISED) == 1
+    assert types.index(EventType.PLAN_CREATED) < types.index(EventType.PLAN_REVISED)
 
 
 def test_event_buffer_is_bounded(runner_factory) -> None:

@@ -168,7 +168,10 @@ def main() -> None:
     import uvicorn
 
     host = os.environ.get("AGI_API_HOST", "127.0.0.1")
-    port = int(os.environ.get("AGI_API_PORT", "8000"))
+    # 默认端口是 8123 而不是 8000：8000 是各类 demo 与工具的默认端口，被占用的
+    # 概率很高——本机实测就有一个别的项目的容器占了它。默认值必须能开箱即用，
+    # 否则每次启动都要先排查"端口被谁占了"。要改就用 AGI_API_PORT。
+    port = int(os.environ.get("AGI_API_PORT", "8123"))
     uvicorn.run(create_app(), host=host, port=port)
 
 
