@@ -19,13 +19,18 @@ from agi_agent.graph.state import initial_state
 from agi_agent.schemas import ToolCallStatus, new_id
 
 #: 工具调用结局 -> 进度行前缀。
-#: `?` 与 `!` 是两类会**当场停下任务**的结局，含义见 tools/errors.py：
-#: `?` 结果不确定（去核实），`!` 前提条件不满足（去修复环境）。
+#: `[?]` 与 `[!]` 是两类会**当场停下任务**的结局，含义见 tools/errors.py：
+#: `[?]` 结果不确定（去核实），`[!]` 前提条件不满足（去修复环境）。
+#
+#: **全部用 ASCII，不要图好看换成 ✓/✗**：Windows 控制台默认编码是 GBK，
+#: 编不出 U+2713，一旦输出被重定向到管道（日志、CI、脚本），
+#: `print` 会直接抛 UnicodeEncodeError 把整个任务打断——本功能实测时就踩到了。
+#: 交互式终端里看着是好的，所以这种坑只在"没人盯着看"的时候炸。
 _STATUS_MARK = {
-    ToolCallStatus.SUCCEEDED: "✓",
-    ToolCallStatus.FAILED: "✗",
-    ToolCallStatus.OUTCOME_UNKNOWN: "?",
-    ToolCallStatus.PRECONDITION_FAILED: "!",
+    ToolCallStatus.SUCCEEDED: "[OK]",
+    ToolCallStatus.FAILED: "[X]",
+    ToolCallStatus.OUTCOME_UNKNOWN: "[?]",
+    ToolCallStatus.PRECONDITION_FAILED: "[!]",
 }
 
 
@@ -43,7 +48,7 @@ def _report(update: object) -> None:
     if not isinstance(update, dict):
         return
     for call in update.get("tool_calls") or []:
-        mark = _STATUS_MARK.get(call.status, "·")
+        mark = _STATUS_MARK.get(call.status, "[-]")
         print(f"  {mark} {call.tool}")
         detail = call.result if call.status is ToolCallStatus.SUCCEEDED else call.error
         if detail:

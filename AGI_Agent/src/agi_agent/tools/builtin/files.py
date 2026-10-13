@@ -56,8 +56,16 @@ def _denied(path: Path) -> str | None:
     return None
 
 
-def _resolve(path: str) -> Path:
-    """把入参解析成受信路径；越界或命中黑名单则抛错。"""
+def resolve_readable_path(path: str) -> Path:
+    """把入参解析成受信路径；越界或命中黑名单则抛错。
+
+    **这是本模块对外的沙箱入口，其他只读工具必须复用它**（图像工具就是这么做的），
+    不要各自实现一遍：沙箱规则一旦有两份实现，就必然有一份先过期，
+    而这类漏洞不会报错、只会安静地放行本不该读的东西。
+
+    注意它只管"能不能读"，不管"读出来是什么"——字节级的上限与格式判断
+    由各工具自己负责（文本与图片的合理上限完全不同）。
+    """
     raw = Path(path).expanduser()
     # 相对路径以第一个允许根为基准。
     candidate = (raw if raw.is_absolute() else ALLOWED_ROOTS[0] / raw).resolve()
@@ -85,7 +93,7 @@ class ReadFileArgs(BaseModel):
 
 
 def list_dir(path: str = ".") -> str:
-    target = _resolve(path)
+    target = resolve_readable_path(path)
     if not target.is_dir():
         raise NotADirectoryError(f"不是目录：{path}")
 
@@ -101,7 +109,7 @@ def list_dir(path: str = ".") -> str:
 
 
 def read_file(path: str) -> str:
-    target = _resolve(path)
+    target = resolve_readable_path(path)
     if target.is_dir():
         raise IsADirectoryError(f"这是一个目录，不是文件：{path}。可改用 local.list_dir")
     if not target.is_file():
@@ -109,7 +117,13 @@ def read_file(path: str) -> str:
 
     data = target.read_bytes()
     if b"\x00" in data[:8192]:
-        raise ValueError(f"看起来是二进制文件，拒绝按文本读取：{path}")
+        # 报错要可操作：光说"这是二进制"没有下一步。图片是最常见的撞墙场景，
+        # 所以直接点出该用哪个工具，避免 planner 一脸茫然地重试同一个调用。
+        raise ValueError(
+            f"看起来是二进制文件，拒绝按文本读取：{path}。"
+            "如果它是图片，请改用 vision.describe_image（简单描述）"
+            "或 vision.analyze_image（需要推理的问题）。"
+        )
 
     text = data.decode("utf-8", errors="replace")
     if len(text) > _MAX_READ_CHARS:

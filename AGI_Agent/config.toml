@@ -1,10 +1,11 @@
-# 角色 -> 模型绑定。
+# 模型槽位 -> 模型绑定。
 #
 # 换供应商或换模型只改本文件，不需要动代码。
 # 本文件不含密钥：api_key_env 只记录环境变量的"名字"，真实密钥放在 .env
 # 或系统环境变量中，后续会迁移到服务端密钥库。
 #
-# 目前四个角色全部绑定 DeepSeek-V4.1-Flash。
+# 目前四个协作角色全部绑定 DeepSeek-V4.1-Flash；
+# 图像理解另有两个档位槽位绑定千问（见文件末尾，它们不被任何图节点使用）。
 # vendor = "openai" 表示走 OpenAI 兼容端点，可覆盖 ChatGPT / DeepSeek / Kimi / 智谱 / 千问。
 
 [llm.conversation]
@@ -30,3 +31,35 @@ vendor = "openai"
 model = "deepseek-flash"
 base_url = "https://api.deepseek.com"
 api_key_env = "DEEPSEEK_API_KEY"
+
+# ---------------------------------------------------------------------------
+# 图像理解的两个档位槽位。
+#
+# 这两段**不被任何图节点使用**，只有 tools/builtin/vision.py 的两个工具会读它——
+# 它们是"能力档位"，不是"协作角色"，区别见 schemas/common.py 的 Role 注释与 ADR 0012。
+#
+# 用哪个档位由**工具名**决定（vision.describe_image -> vision_quick），
+# 模型在计划里只能选工具名，填不了档位——这样"这笔请求会用哪个模型"永远是
+# 注册表 + 本文件的静态属性，审计时不必读计划参数。
+#
+# base_url 必须带 /compatible-mode/v1：**不要照抄上面 DeepSeek 那种不带 /v1 的写法**，
+# 两者前缀规则不同。ChatOpenAI 会在其后追加 /chat/completions。
+# ---------------------------------------------------------------------------
+
+[llm.vision_quick]
+vendor = "openai"
+model = "qwen3.8-flash"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key_env = "DASHSCOPE_API_KEY"
+# 关掉思考模式：实测（2026-10-13）同一张图同一问题，思考开着 completion_tokens=73、
+# 关掉=5。Flash 存在的意义就是快和省，让它想纯属浪费。
+extra_body = { enable_thinking = false }
+
+[llm.vision_deep]
+vendor = "openai"
+model = "qwen3.8-max"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key_env = "DASHSCOPE_API_KEY"
+# 显式打开（同时也是供应商的默认值）：图表、图片比对这类问题应该让它想。
+# 之所以写出来而不是依赖默认——默认值变了没有人会通知我们。
+extra_body = { enable_thinking = true }

@@ -50,5 +50,8 @@ def get_model(role: Role) -> BaseChatModel:
         kwargs["base_url"] = spec.base_url
     if spec.temperature is not None:
         kwargs["temperature"] = spec.temperature
+    if spec.extra_body is not None:
+        # 供应商私有参数的透传口；为什么需要它、取值依据见 config.ModelSpec 的注释。
+        kwargs["extra_body"] = spec.extra_body
 
     return adapter(**kwargs)

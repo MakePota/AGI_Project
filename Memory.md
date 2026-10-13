@@ -60,7 +60,7 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 | 想了解 | 去哪 |
 | --- | --- |
 | 项目整体架构、技术栈、目录职责 | `AGI_Agent/docs/architecture.md` |
-| 为什么引入某个依赖、为什么否掉某个方案 | `AGI_Agent/docs/decisions/`（ADR，11 篇） |
+| 为什么引入某个依赖、为什么否掉某个方案 | `AGI_Agent/docs/decisions/`（ADR，13 篇） |
 | 某个功能怎么运转、要改它先看哪里 | `AGI_Agent/docs/features/` |
 
 几条**约束性质**的结论。先知道结论，需要细节再点进 ADR：
@@ -77,6 +77,10 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 - **工具调用的结局按「谁来修」分类，不许混为一谈**：结果不确定 → 停下让人**核实**（ADR 0010）；
   前提条件不满足（代理没开、登录过期）→ 停下让人**修环境**（ADR 0011）。
   两者都绝不自动重试。
+- 图像理解走千问，**但只以「工具」形态接入**，不占用任何 agent 角色槽位；
+  模型档位由「工具名 → 槽位 → `config.toml`」两级静态绑定，**不由模型自报** → ADR 0012
+- **不做微信（个人版）自动化**：UIA 是唯一合规路线，但它的地基正被微信 4.x 拆掉，
+  且撞腾讯 ToS；各条路线为何出局见 ADR 0013
 - `graph`（怎么思考）/ `tools`（能做什么）/ `policies`（允许做什么）三者必须分离 → `architecture.md`
 
 ## 5. 当前实际进度
@@ -87,7 +91,7 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 
 `AGI_Agent` 是一个可运行的 uv Python 包项目（`uv init --package --name agi-agent --python 3.12`）。
 
-五项能力均已**实测跑通**——不是「代码写完了」，是真的跑过：
+下列能力均已**实测跑通**——不是「代码写完了」，是真的跑过：
 
 | 能力 | 状态 | 实测内容 |
 | --- | --- | --- |
@@ -98,16 +102,17 @@ AGI_Client  ->  AGI_Server  ->  AGI_Agent  ->  Models / MCP Servers / Local Tool
 | 「结果不确定」的写操作不再被重试 | ✅ 已修复并回归 | 一次复核失败曾让购物车出现 3 份同一游戏 → ADR 0010 |
 | 网络/登录问题当场停下并给出下一步 | ✅ 已实测 | 45 秒静默等待 → 8.6 秒明确报错；登录过期会在**点击前**被发现 → ADR 0011 |
 | CLI 过程输出（流式） | ✅ 已实测 | 工具调用在**开始前**就打印进度，不再是一个不动的窗口 |
-| 单元测试 | ✅ 92 个 | `uv run pytest`，不消耗任何 API 额度 |
+| 单元测试 | ✅ 131 个 | `uv run pytest`，不消耗任何 API 额度 |
 | 代码质量检查 | ✅ 已实测 | `uv run ruff check .` 全绿（首次开启时实测 786 条 → 逐条判定后修掉 8 条真问题） |
 | 换行符基线 | ✅ 已实测 | 根 `.gitattributes` 固定入库 LF；实测全仓 0 个 CRLF，不再依赖各机器的 `core.autocrlf` |
+| **图像理解（千问）** | ✅ 已实测 | 端到端：读一张写着随机数字的图，最终回复与图中数字**一致**；Key 缺失时正确**停下**（不进重规划）；只读任务未受影响 → ADR 0012 |
 
 关键入口（完整清单以实际目录为准，目录职责见 `AGI_Agent/docs/architecture.md`）：
 
 ```text
 AGI_Agent/
-├── config.toml                  # 角色 -> 模型绑定（可提交，不含密钥）
-├── .env                         # DEEPSEEK_API_KEY、AGI_BROWSER_PROXY，已被 .gitignore 忽略
+├── config.toml                  # 模型槽位 -> 模型绑定（可提交，不含密钥）
+├── .env                         # DEEPSEEK_API_KEY、DASHSCOPE_API_KEY、AGI_BROWSER_PROXY，已被 .gitignore 忽略
 ├── docs/                        # architecture.md + decisions/(ADR) + features/
 ├── scripts/steam_login.py       # Steam 人工登录辅助 + --verify
 └── src/agi_agent/
@@ -115,16 +120,17 @@ AGI_Agent/
     ├── config.py                # 配置与常量读取
     ├── schemas/                 # 稳定数据契约（6 个：task/plan/tool_call/approval/event/review）
     ├── graph/                   # builder / state / checkpoint / nodes
-    ├── tools/                   # registry + errors + builtin(files, steam, fake)
+    ├── tools/                   # registry + errors + builtin(files, steam, vision, fake)
     ├── providers/llm/           # 供应商注册表 + structured.py
     └── policies/                # risk.py
 ```
 
-假工具只剩 `wechat.send_message` 一个，属**待实现的占位**。
+假工具只剩 `wechat.send_message` 一个。它**不再是待实现的能力**（ADR 0013 已决定不做微信），
+保留它只是因为它恰好是验证审批链路的现成样本。
 
 ### 尚未完成 / 未执行
 
-- **微信（个人版 UI 自动化）尚未开始**，功能开发的下一步就是它。详见 §6。
+- ~~微信（个人版 UI 自动化）尚未开始~~ → **已调研并决定不做**，各条路线为何出局见 ADR 0013。
 - **MCP Client 层有意未实现**：目前没有出现「需要一个成熟第三方 MCP Server」的真实需求。
   判据见 ADR 0006。
 - `langgraph.json` 未创建；当前由自带 `cli.py` 驱动，暂不需要，理由见 `AGI_Agent/docs/architecture.md`。
@@ -150,7 +156,9 @@ AGI_Agent/
 
 ## 6. 当前任务
 
-### 当前供应商：DeepSeek
+### 当前供应商
+
+**主力（文本）：DeepSeek** —— 四个协作角色**全部**绑定它。
 
 | 项目 | 已确认值 |
 | --- | --- |
@@ -159,7 +167,16 @@ AGI_Agent/
 | OpenAI 兼容 Base URL | `https://api.deepseek.com` |
 | API Key 环境变量 | `DEEPSEEK_API_KEY` |
 
-四个角色目前**全部**绑定它。换供应商只需改 `AGI_Agent/config.toml`（ADR 0002）。
+**图像理解：千问（阿里云百炼 / DashScope）** —— 只被图像工具使用，**不占用任何角色槽位**。
+
+| 项目 | 已确认值 |
+| --- | --- |
+| 快档模型 ID | `qwen3.8-flash`（**思考模式在 config 里显式关闭**） |
+| 准档模型 ID | `qwen3.8-max`（思考模式显式开启） |
+| OpenAI 兼容 Base URL | `https://dashscope.aliyuncs.com/compatible-mode/v1`（**必须带 `/compatible-mode/v1`**，与 DeepSeek 的写法不同） |
+| API Key 环境变量 | `DASHSCOPE_API_KEY` |
+
+换供应商或换模型都只需改 `AGI_Agent/config.toml`（ADR 0002）。
 
 **明确不装**：`langchain`（meta 包，本项目用 LangGraph 编排，不需要）、
 `langchain-deepseek`（对 `deepseek-flash` 的覆盖未经核实，而 `ChatOpenAI` + `base_url` 路径已核实）。
@@ -171,6 +188,9 @@ AGI_Agent/
 ### 安全事项（重要）
 
 - `.env` 中的 DeepSeek API Key 曾在对话中明文传递过，**建议尽快在 DeepSeek 控制台轮换该 Key**。
+- **`.env` 中的千问 Key（`DASHSCOPE_API_KEY`）同样在对话中明文传递过（2026-10-13），
+  建议尽快在阿里云百炼控制台轮换。** 已写入 `.env`（实测被 gitignore 忽略），
+  但"没进版本控制"不等于"没泄露"——它已经出现在对话记录里。
 - `.env` 已加入 `.gitignore` 并实测生效；`.idea/` 已由 `AGI_Agent/.gitignore` 忽略；
   `.secrets/`（Steam 登录态）已加入根 `.gitignore`，并被本地文件工具列入黑名单，两条均实测生效。
 - 密钥最终要迁到服务端密钥库。届时只需改变 `ModelSpec.api_key_env` 的解析来源，角色与模型配置不受影响。
@@ -198,11 +218,11 @@ AGI_Agent/
    `architecture.md`（整体长什么样）、`decisions/`（ADR：为什么这样选）、
    `features/`（功能怎么运转、要改它先看哪里）。本文件随之收窄为**纯交接用途**。
    `AGI_Client`、`AGI_Server` 将来各自建立自己的 `docs/`。
-8. **下一步是微信（个人版 UI 自动化）**。这块除工具本身外还需单独设计：环境依赖
-   （客户端需开启并已登录）、凭据管理、以及操作中途失败时如何不留半成品状态。
-   实施前仍需先做守则 §2 的调研（WeChat 的 MCP Server 与开源实现）。
-   **注意**：微信发消息**无法幂等**（没有"已经发过了"这种状态可查），
-   所以 ADR 0010/0011 的那套"停下"机制在这里是必需的，不能只靠幂等兜底。
+8. ⛔ **微信（个人版 UI 自动化）：已调研，决定不做（2026-10-13）**。调研把可行路线
+   收敛成七类，**唯一合规的 UIA 路线**依然被否——微信 4.x 改成自绘渲染正在拆掉它的地基，
+   且撞腾讯 ToS、存在账号被限制风险。各条路线的出局原因见
+   [ADR 0013](AGI_Agent/docs/decisions/0013-no-wechat-automation.md)，
+   **不要重跑这份调研**。
 9. ✅ **代码质量与换行符基线（2026-10-13）**：装上 `Ruff` 并定下规则集，实测从
    786 条收敛到 0——其中 756 条是「中文全角标点」误报（`RUF001/002/003`），
    **正确做法是关掉规则而不是改代码**，因为本项目规定注释用中文。真问题只有 8 条，
@@ -210,13 +230,26 @@ AGI_Agent/
    两条踩出来的坑记在 `AGI_Agent/pyproject.toml` 的注释里：RUF100 的自动修复会
    把整行注释**连同中文解释一起删掉**（故设为只报不修）；注释里写出「井号 + noqa」
    字样会被 Ruff 当成真指令解析。**未启用 `ruff format`**，理由见 §5 末尾。
+10. ✅ **图像理解（千问，2026-10-13）**：以**工具**形态接入，不占用角色槽位；
+    档位是「工具名 → 槽位 → `config.toml`」两级绑定，**不由模型自报**。
+    端到端实测通过（读出图中的随机数字，与图中一致），Key 缺失时正确停下。
+    关键实测数据：兼容端点**确实接受 base64 图**（响应里 `image_tokens=154` 为证），
+    思考模式默认开启、关掉后 token 从 73 降到 5。详见
+    [功能文档](AGI_Agent/docs/features/vision-tools.md) 与
+    [ADR 0012](AGI_Agent/docs/decisions/0012-vision-via-dashscope.md)。
+    顺带修掉一个既有漏洞：审批摘要原先只显示模型写的描述、不显示**参数**，
+    于是看不出要把哪个文件发出去。
 
-**当前功能开发的下一个目标仍是上面的第 8 条：微信。**
+**当前功能开发的下一个目标待定。** 微信（第 8 条）已关闭；尚未动的方向包括
+`AGI_Client` / `AGI_Server` 的骨架、以及 §4 里被推迟的 MCP Client（需先出现真实需求）。
 
 **已知遗留（不阻塞，但别忘了）**：
 
 - `PRECONDITION_FAILED` 与不确定结局目前共用 `TaskStatus.NEEDS_HUMAN`，
   用户可见的措辞区分了，状态枚举没区分。需要按状态统计失败类型时再拆。
+- 图像理解的错误分类里，**HTTP 400 与 429 两条分支尚未实测**（只实测到 401 与 404）。
+  两条都是保守推断，`vision.py` 的 `_classify_provider_error` 里已就地在场标注。
+  真撞上时按实况修正，不要照抄推断。
 
 **已关闭的遗留（不要再花时间验证）**：
 

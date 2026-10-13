@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -60,22 +61,36 @@ BROWSER_PROXY = os.environ.get("AGI_BROWSER_PROXY") or None
 
 
 class ModelSpec(BaseModel):
-    """单个角色所使用的模型规格。"""
+    """单个模型槽位（见 ``Role``）所使用的模型规格。"""
 
     vendor: str
     model: str
     base_url: str | None = None
     api_key_env: str
     temperature: float | None = None
+    #: 供应商私有参数，原样透传为请求体的 ``extra_body``。
+    #: 存在的理由是实测出来的、不是预留：千问的 qwen3.8 系列**默认开着思考模式**，
+    #: 实测同一张图同一问题，关掉思考后 completion_tokens 从 73 降到 5（14 倍）。
+    #: 这种参数既不属于 temperature 也不是 OpenAI 标准字段，只能从这里下放，
+    #: 否则就只能硬编码在代码里，违背"档位写在配置里"的要求（ADR 0012）。
+    extra_body: dict[str, Any] | None = None
 
 
 class LLMSettings(BaseModel):
-    """四个 Agent 角色各自绑定的模型。"""
+    """每个模型槽位各自绑定的模型。
+
+    槽位名必须与 ``Role`` 的取值一一对应。**注意**：本模型的字段是硬编码的，
+    而 pydantic 默认会静默忽略未声明的字段——只往 ``config.toml`` 加段、忘了在这里
+    加字段，配置会**悄无声息地不生效**。``tests/unit/test_config_binding.py``
+    有一条不变量测试专门防这个。
+    """
 
     conversation: ModelSpec
     planner: ModelSpec
     executor: ModelSpec
     reviewer: ModelSpec
+    vision_quick: ModelSpec
+    vision_deep: ModelSpec
 
 
 class Settings(BaseSettings):

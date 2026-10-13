@@ -16,15 +16,28 @@ class SchemaModel(BaseModel):
 
 
 class Role(StrEnum):
-    """Agent 的四个协作角色。
+    """模型绑定的**命名槽位**：此处只定义"什么位置需要一个模型"。
 
-    此处只定义"谁来做"，具体由哪个供应商的哪个模型承担属于 providers 层。
+    具体由哪个供应商的哪个模型承担属于 providers 层（见 ADR 0002）。
+    一个成员的值必须与 ``config.toml`` 里的 ``[llm.<值>]`` 段名一致——
+    这是 ``get_model`` 用 ``getattr(settings.llm, role.value)`` 取配置的前提。
+
+    槽位分两类，不要混淆：
+
+    - **协作角色**（conversation / planner / executor / reviewer）：图里的节点按此取值。
+    - **能力档位**（vision_quick / vision_deep）：只有工具用得到，没有任何节点取值。
+      分两个档位而不是一个带参数的档位，是为了让"用哪个模型"由**注册表与配置**决定，
+      而不是由计划里的参数（即模型的输出）决定，见 ADR 0012。
     """
 
     CONVERSATION = "conversation"
     PLANNER = "planner"
     EXECUTOR = "executor"
     REVIEWER = "reviewer"
+    #: 图像理解的"快"档：便宜、够用于看图说话与 OCR。
+    VISION_QUICK = "vision_quick"
+    #: 图像理解的"准"档：用于需要推理的图像问题（图表、比对、长文档截图）。
+    VISION_DEEP = "vision_deep"
 
 
 class RiskLevel(StrEnum):

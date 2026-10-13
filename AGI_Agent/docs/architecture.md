@@ -21,7 +21,7 @@ runtime
 | --- | --- |
 | `schemas/` | 稳定的数据契约，不包含供应商代码。所有契约 `extra="forbid"`，未声明字段直接报错。 |
 | `graph/` | LangGraph 工作流定义；不直接写入文件或调用外部服务。 |
-| `tools/` | 工具元数据、执行包装和 MCP Client 适配。 |
+| `tools/` | 工具元数据、执行包装和 MCP Client 适配。**注意**：自 ADR 0012 起，工具也可以直接调用 `providers` 取模型（图像理解就是这么做的）——看到这条依赖边不要当成笔误，它没有绕过 `policies`。 |
 | `providers/` | 模型、追踪等第三方 SDK 的隔离层。 |
 | `policies/` | 风险分级、权限检查、人工确认中断。 |
 
@@ -39,6 +39,7 @@ runtime
 | Python | 3.12 | |
 | 工作流编排 | `LangGraph` | 执行状态用 SQLite 持久化，见 [ADR 0004](decisions/0004-sqlite-checkpointer.md) |
 | 模型抽象 | `LangChain Core` 的 `BaseChatModel` | 唯一模型接口；供应商适配见 [ADR 0002](decisions/0002-pluginable-llm.md) |
+| 图像理解 | 千问 `qwen3.8-flash` / `qwen3.8-max`（DashScope 兼容端点） | **只由图像工具调用**，不占用任何 agent 角色槽位；见 [ADR 0012](decisions/0012-vision-via-dashscope.md) |
 | 数据建模与配置 | `Pydantic`、`pydantic-settings` | 角色 → 模型绑定写在 `config.toml` |
 | 浏览器自动化 | `Playwright` | 见 [ADR 0005](decisions/0005-playwright-for-browser-automation.md) |
 | 测试 | `pytest` | `tests/unit/` 不消耗 API 额度 |
@@ -76,8 +77,10 @@ receive -> understand -> plan -> authorize -> execute -> review -> respond
 3. ✅ 完成首个 LangGraph 工作流与单元测试，含 `interrupt` 人工确认与恢复。
 4. ✅ 首个真实只读工具（`local.list_dir`、`local.read_file`）。
 5. ✅ 首个 `WRITE` 风险工具（`steam.add_to_cart`，浏览器自动化）。
-6. ⬜ 微信（个人版 UI 自动化）。
-7. ⬜ 通过 MCP Client 接入首个经过审查的外部工具（**等真实需求出现再做**，见 ADR 0006）。
+6. ✅ 图像理解（千问）：以**工具**形态接入，不占用 agent 角色槽位。
+7. ⬜ 微信（个人版 UI 自动化）：**已调研并决定不做**，理由见
+   [ADR 0013](decisions/0013-no-wechat-automation.md)。
+8. ⬜ 通过 MCP Client 接入首个经过审查的外部工具（**等真实需求出现再做**，见 ADR 0006）。
 
 `langgraph.json` **仍未创建**：当前由自带的 `cli.py` 驱动，未使用 LangGraph CLI / Server，
 因此不需要它。将来要用 `langgraph dev` 或部署到 LangGraph Server 时再补，

@@ -81,3 +81,48 @@ def test_approval_summary_marks_every_step():
     assert "需确认" in summary
     assert "local.read_file" in summary
     assert "wechat.send_message" in summary
+
+
+def test_approval_summary_shows_the_actual_arguments():
+    """审批必须看到**真正会被执行的参数**，而不只是模型写的散文。
+
+    场景：description 说"看看这张图"，但真正决定要把哪个文件上传到云端的是
+    arguments 里的路径。没有这一行，人批准的是模型的说法，不是将要发生的事。
+    """
+    plan = assign_risk(
+        _plan(
+            PlanStep(
+                index=0,
+                description="看看这张图",
+                tool="vision.describe_image",
+                arguments={"path": "E:/pics/私密截图.png"},
+            )
+        )
+    )
+    summary = approval_summary(plan)
+    assert "path=E:/pics/私密截图.png" in summary
+
+
+def test_approval_summary_truncates_long_values():
+    """长参数要截断，否则一段正文就能把审批摘要撑满整屏。"""
+    plan = assign_risk(
+        _plan(
+            PlanStep(
+                index=0,
+                description="发长消息",
+                tool="wechat.send_message",
+                arguments={"to": "张三", "text": "喂" * 200},
+            )
+        )
+    )
+    summary = approval_summary(plan)
+    assert "to=张三" in summary
+    assert "…" in summary
+    # 截断后不该出现连续的长正文
+    assert "喂" * 100 not in summary
+
+
+def test_reasoning_steps_have_no_argument_line():
+    """纯推理步骤没有工具，也就不该多出一行空参数。"""
+    summary = approval_summary(_plan(PlanStep(index=0, description="先想清楚")))
+    assert "参数：" not in summary
