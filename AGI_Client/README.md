@@ -69,7 +69,7 @@ Spring Boot 一起发布（同源）时，把它改成空字符串即可。
 
 ## 已知限制
 
-- **只支持 H5。** uni-app 的 App 端**没有 `EventSource`**，StreamingEvent 需要接原生插件
+- **只支持 H5。** uni-app 的 App 端**没有 `EventSource`**，收流式事件需要接原生插件
   或 renderjs 桥接（ADR 0016 记了这笔代价）。在非 H5 平台上，页面会给出一句明确提示，
   而不是静默地什么都不发生。**没有写假的轮询兜底**——没验证过的代码比明确不支持更糟。
 - **没有登录。** 后端因此只绑 `127.0.0.1`，且 CORS 只放行本机来源
@@ -98,3 +98,18 @@ cd AGI_Agent && uv run python scripts/ui_smoke.py
 | 页面结构、样式、事件文案 | `pages/index/index.vue` |
 | 页面标题、路由 | `pages.json` |
 | App 名称、图标、appid | `manifest.json`（打包安卓时才需要填 appid） |
+
+## 文档
+
+| 想了解 | 去哪 |
+| --- | --- |
+| 整个仓库怎么跑起来、文档都在哪 | 仓库根目录的 [`README.md`](../README.md) |
+| 项目当前做到哪一步 | 仓库根目录的 `Memory.md` |
+| 为什么分成三层、为什么前端不直连引擎 | [ADR 0014](../AGI_Agent/docs/decisions/0014-split-server-and-agent.md) |
+| 为什么"刷新不丢任务"能成立 | [ADR 0015](../AGI_Agent/docs/decisions/0015-interrupt-as-queryable-state.md) |
+| 为什么用 uni-app、为什么只做 H5 | [ADR 0016](../AGI_Agent/docs/decisions/0016-server-stack-selection.md) |
+| 图片为什么不走对象存储 | [ADR 0017](../AGI_Agent/docs/decisions/0017-image-upload-without-object-storage.md) |
+
+**本文件同时充当本项目的架构说明**：客户端只有三个源文件（配置 / 接口 / 页面），
+上面的「现在有什么」与「三个设计点」已经把它讲完了，再单开一份架构文档只会重复。
+
