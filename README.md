@@ -99,7 +99,16 @@ cd <HBuilderX 安装目录> && ./cli.exe launch web --project AGI_Client
 cd AGI_Agent && uv run pytest          # 161 个单测，不消耗任何 API 额度
 cd AGI_Agent && uv run ruff check .    # 静态检查
 cd AGI_Server && mvn test              # 10 个 Java 单测，不连库不联网
+cd AGI_Agent && uv run python scripts/check_docs.py   # 文档腐化检查，见下
 ```
+
+**`check_docs.py` 是什么**：文档本身会烂——文件改名后链接失效（不会报错）、
+加了测试忘了改数字、新增 ADR 忘了登记进索引。这个脚本把这些**能被机械验证**的部分
+查一遍：链接、单测数、ADR 篇数、索引完整性。
+
+**收工时跑一次**（规则见 `CLAUDE.md`）：`Memory.md` 是唯一的状态来源，
+它一旦漏更新，下一个会话就会拿着旧状态开工，而且不会有任何东西报错。
+写文档时也建议跑——它比人眼可靠。
 
 **端到端**（需要四个服务都跑着）：
 
