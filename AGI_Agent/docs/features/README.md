@@ -83,4 +83,7 @@
 | [Steam 工具](steam-tools.md) | 已完成 | `tools/builtin/steam.py` | 搜索、查价、购物车增删查；加购与删除是幂等的 `WRITE` 工具（不涉及结账支付） |
 | [图像理解工具](vision-tools.md) | 已完成 | `tools/builtin/vision.py` | 用千问读图；两个工具各绑一个模型档位，档位由注册表与 `config.toml` 决定 |
 
-> `AGI_Client`、`AGI_Server` 将来各自建立自己的 `docs/features/`。
+> **只有本目录是 `features/` 文档。** `AGI_Server` 与 `AGI_Client` 各自只有一个功能面
+> （转发任务 / 一个页面），它们的 `README` 已经把「怎么运转、要改它先看哪里」讲完了——
+> 再按这里的门类各开一套，只会得到两份互相抄袭的文档。
+> 等哪一层真的长出多个独立功能，再给它建 `docs/features/`。

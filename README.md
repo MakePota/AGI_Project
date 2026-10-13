@@ -74,6 +74,25 @@ cd <HBuilderX 安装目录> && ./cli.exe launch web --project AGI_Client
 现在这样放是因为决策目录跟着最早的项目走；等 `AGI_Server`、`AGI_Client` 自己攒出
 足够多的决策时，再考虑把项目级的提到根目录——**不要为了统一而统一**。
 
+## 术语速查
+
+文档里反复出现、但**没有别处解释**的词。这里只给一句话，完整的故事在链接里。
+
+| 术语 | 一句话 | 细节在哪 |
+| --- | --- | --- |
+| **ADR** | 架构决策记录：记下"当时为什么这么选、否掉了什么"。编号从 0001 起，**不复用不重排** | [`AGI_Agent/docs/decisions/`](AGI_Agent/docs/decisions/README.md) |
+| **SSE** | 服务端单向推事件的 HTTP 长连接（`text/event-stream`）。OpenAI 的流式接口用的就是它 | [ADR 0015](AGI_Agent/docs/decisions/0015-interrupt-as-queryable-state.md) |
+| **中断 / interrupt** | 图执行到需要人确认的一步就**停下来**，把计划交给人；人答完再继续。本项目里它是一个**可查询的状态**，不是挂着的连接 | [ADR 0015](AGI_Agent/docs/decisions/0015-interrupt-as-queryable-state.md) |
+| **checkpointer** | LangGraph 用来把"任务执行到哪了"存下来的组件。本项目用 SQLite，**不支持并发** | [ADR 0004](AGI_Agent/docs/decisions/0004-sqlite-checkpointer.md) |
+| **LangGraph** | 把智能体的流程写成一个有状态、可中断、可从断点恢复的图 | [`architecture.md`](AGI_Agent/docs/architecture.md) |
+| **分诊 / triage** | 图的第一步：判断这句话是闲聊还是任务，决定往哪条路走 | [功能文档](AGI_Agent/docs/features/supervisor-graph.md) |
+| **`READ` / `WRITE` 风险** | 工具的风险等级。`READ` 自动放行；`WRITE` 会**停下来等你批准**。等级由代码赋值，不信模型自己报 | [ADR 0007](AGI_Agent/docs/decisions/0007-tool-registry-signature-and-risk.md) |
+| **幂等** | 同一个动作做多少次结果都一样。加购物车是幂等的；**"发消息"这类动作天生不是**（没有"已经发过了"这种状态可查），只能靠"停下问人"兜底 | [ADR 0010](AGI_Agent/docs/decisions/0010-no-retry-on-uncertain-write.md) |
+| **MCP** | 一套让 AI 应用接入外部工具的通用协议。本项目**有意还没接**（等真实的现成工具出现） | [ADR 0006](AGI_Agent/docs/decisions/0006-external-capability-policy.md) |
+| **薄转发层** | `AGI_Server` 的定位：只管转发与存镜像，不做智能体推理 | [`AGI_Server/docs/architecture.md`](AGI_Server/docs/architecture.md) |
+| **Playwright** | 浏览器自动化库。Steam 那些工具靠它驱动真实浏览器 | [ADR 0005](AGI_Agent/docs/decisions/0005-playwright-for-browser-automation.md) |
+| **DashScope / 千问** | 阿里云的模型服务。本项目**只**用它做图像理解，文本推理仍走 DeepSeek | [ADR 0012](AGI_Agent/docs/decisions/0012-vision-via-dashscope.md) |
+
 ## 开发
 
 ```bash

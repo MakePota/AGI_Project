@@ -25,7 +25,8 @@ cd AGI_Server && mvn spring-boot:run
 cd /path/to/HBuilderX && ./cli.exe launch web --project AGI_Client
 ```
 
-启动后控制台会打印地址（默认 `http://localhost:5173/`）。
+启动后 **HBuilderX 的控制台会打印实际地址**——本机实测是 `http://localhost:5173/`
+（Vite 的默认端口；被占用时它会自动换一个，所以以控制台打印的为准）。
 
 **后端地址配在 [`api/config.js`](api/config.js) 一处**。以后把 H5 构建产物交给
 Spring Boot 一起发布（同源）时，把它改成空字符串即可。
@@ -77,7 +78,9 @@ Spring Boot 一起发布（同源）时，把它改成空字符串即可。
 - **任务串行执行。** 引擎侧的 SQLite checkpointer 不支持并发（ADR 0004），
   所以上一个任务跑完下一个才轮到。
 - **一张图一个任务**，且"图在哪"是靠**任务文本**传给模型的（见 ADR 0017 的已知折中）。
-  实测通过，但不是硬保证——若出现"模型抄错路径"，就该给 `Task` 加附件字段了。
+  实测通过，但不是硬保证。**什么现象说明它出问题了**：图片明明上传成功、审批里也显示了路径，
+  但图像工具报"文件不存在"——那说明模型把路径抄错了。出现这种报错时，
+  就该给 `Task` 加附件字段（把路径改成结构化传递），而不是继续调提示词。
 - **上传的图片不会被自动清理**，会一直留在 `AGI_Agent/uploads/` 里。
 
 ## 测试
@@ -110,6 +113,9 @@ cd AGI_Agent && uv run python scripts/ui_smoke.py
 | 为什么用 uni-app、为什么只做 H5 | [ADR 0016](../AGI_Agent/docs/decisions/0016-server-stack-selection.md) |
 | 图片为什么不走对象存储 | [ADR 0017](../AGI_Agent/docs/decisions/0017-image-upload-without-object-storage.md) |
 
-**本文件同时充当本项目的架构说明**：客户端只有三个源文件（配置 / 接口 / 页面），
-上面的「现在有什么」与「三个设计点」已经把它讲完了，再单开一份架构文档只会重复。
+**本文件同时充当本项目的架构说明**：这一层**需要人手写和维护的只有三个文件**
+（`api/config.js` 配置 / `api/tasks.js` 接口 / `pages/index/index.vue` 页面），
+其余是 HBuilderX 生成的脚手架（`App.vue`、`main.js`、`manifest.json`、`uni.scss` …），
+基本不用动。上面的「现在有什么」与「三个设计点」已经把这一层讲完了，
+再单开一份架构文档只会重复。
 
