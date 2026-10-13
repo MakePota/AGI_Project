@@ -37,6 +37,10 @@ cd AGI_Server && mvn spring-boot:run           # 监听 127.0.0.1:8090
 | `GET` | `/api/tasks/{id}` | 任务详情；**未结束的会先向 Agent 对齐一次** |
 | `GET` | `/api/tasks/{id}/events?since=` | SSE 事件流（薄转发；`since` 用于断线续传） |
 | `POST` | `/api/tasks/{id}/approval` | 提交人工审批决定 |
+| `POST` | `/api/uploads` | 上传一张图片（multipart，字段名 `file`），返回它在**引擎侧**的路径 |
+
+`/api/uploads` 是**纯转发**：本服务不保存上传的文件，由 `AGI_Agent` 收下
+（图片归它管，读图的也是它）。这样它将来换存储方式，这边一行都不用改。
 
 **响应形状与 `AGI_Agent` 的完全一致**（字段名都是 snake_case）。这不是巧合：
 本服务是薄转发层，同形意味着同一套脚本能验两个服务。

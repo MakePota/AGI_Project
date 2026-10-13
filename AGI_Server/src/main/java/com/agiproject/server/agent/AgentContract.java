@@ -66,6 +66,16 @@ public final class AgentContract {
     }
 
     /**
+     * 一张已上传图片的位置与信息。
+     *
+     * <p>{@code path} 是**智能体那一侧的本机路径**。本服务拿到它之后会写进任务目标文本，
+     * 由 planner 抄进图像工具的参数——图片**不经过任何外部存储**（见 ADR 0017）。
+     * 服务端不需要、也不应该去理解这个路径指向哪里。
+     */
+    public record UploadResult(String path, String mime, long size, String name) {
+    }
+
+    /**
      * 计划里的一步。
      *
      * <p>{@code arguments} 必须在这里：审批看的应该是**真正会被执行的东西**，

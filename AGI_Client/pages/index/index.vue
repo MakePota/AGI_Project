@@ -11,8 +11,16 @@
 			<input class="input" v-model="goal" :disabled="busy"
 				placeholder="说一件要做的事，例如：列出当前目录下有哪些文件" confirm-type="send"
 				@confirm="submit" />
-			<button class="send" type="primary" :loading="busy" :disabled="!goal.trim() || busy"
+			<button class="pick" size="mini" :disabled="busy" @click="chooseImage">选图</button>
+			<button class="send" type="primary" :loading="busy" :disabled="!canSubmit || busy"
 				@click="submit">发送</button>
+		</view>
+
+		<!-- 选中的图片。上传发生在点"发送"时，这里只做预览。 -->
+		<view v-if="imagePath" class="attach">
+			<image class="thumb" :src="imagePath" mode="aspectFit" />
+			<text class="attach-name">已选图片（发送时上传）</text>
+			<text class="attach-remove" @click="removeImage">移除</text>
 		</view>
 
 		<!--
@@ -64,6 +72,7 @@
 		getTask,
 		decideApproval,
 		subscribeEvents,
+		uploadImage,
 		TERMINAL_STATUSES
 	} from '@/api/tasks.js'
 
@@ -107,6 +116,9 @@
 		data() {
 			return {
 				goal: '',
+				// 选中的图片的**本地临时路径**（用来预览）。真正的上传发生在点"发送"时——
+				// 选了又不发的话不该在磁盘上留下东西。
+				imagePath: '',
 				taskId: '',
 				status: '',
 				events: [],
@@ -119,6 +131,11 @@
 			}
 		},
 		computed: {
+			// 只选图不打字也要能发——"这张图里是什么"是最常见的用法，
+			// 逼用户再打一句"描述这张图"没有意义。
+			canSubmit() {
+				return !!this.goal.trim() || !!this.imagePath
+			},
 			statusLabel() {
 				if (!this.taskId) return '未开始'
 				return STATUS_LABELS[this.status] || this.status || '…'
@@ -141,25 +158,69 @@
 		},
 		methods: {
 			async submit() {
-				const goal = this.goal.trim()
-				if (!goal || this.busy) return
+				const typed = this.goal.trim()
+				if (this.busy || !this.canSubmit) return
 
 				this.busy = true
 				this.error = ''
+				const image = this.imagePath
 				this.resetRun()
 				try {
+					let goal = typed
+					if (image) {
+						// 先上传拿到**引擎侧的路径**，再把它拼进目标文本。
+						// 上传写在这个位置（而不是选图时）是刻意的：
+						// 用户选了图又改主意不发，磁盘上就不该多一个文件。
+						const uploaded = await uploadImage(image)
+						goal = this.buildGoal(typed, uploaded.path)
+					}
 					const task = await createTask(goal)
 					this.taskId = task.task_id
 					this.status = task.status
 					// 存起来，刷新页面后才接得回去。
 					uni.setStorageSync('agi_task_id', this.taskId)
 					this.goal = ''
+					this.imagePath = ''
 					this.openStream(0)
 				} catch (err) {
 					this.error = err.message
 				} finally {
 					this.busy = false
 				}
+			},
+
+			chooseImage() {
+				if (this.busy) return
+				uni.chooseImage({
+					count: 1,
+					success: (res) => {
+						this.imagePath = res.tempFilePaths && res.tempFilePaths[0]
+						this.error = ''
+					},
+					fail: () => {
+						// 用户取消选择也会走到 fail，那不是错误，不该弹提示。
+					}
+				})
+			},
+
+			removeImage() {
+				this.imagePath = ''
+			},
+
+			/**
+			 * 把图片路径拼进任务目标文本。
+			 *
+			 * **这是一个已知的折中。** `Task` 目前只有 `goal` 一个字段，图片"在哪"
+			 * 只能靠这段文字传给 planner，再由它抄进图像工具的参数。
+			 * 模型照抄一个路径大概率没问题，但**不是硬保证**；
+			 * 更稳妥的做法是给 `Task` 加一个附件字段，那是更大的改动
+			 * （要动数据契约、checkpoint 与 plannner 提示词），等这里实测出问题再上。
+			 *
+			 * 路径用正斜杠（服务端返回时就处理好了）：反斜杠在文本里更容易被转义或吃掉。
+			 */
+			buildGoal(typed, imagePath) {
+				const base = typed || '描述这张图片的内容'
+				return base + '\n（本次任务的图片在本机路径 ' + imagePath + '，请用图像工具读取它）'
 			},
 
 			async restore() {
@@ -262,6 +323,7 @@
 			reset() {
 				this.closeStream()
 				uni.removeStorageSync('agi_task_id')
+				this.imagePath = ''
 				this.resetRun()
 			},
 
@@ -290,11 +352,17 @@
 
 			// 参数渲染成一行紧凑的 "键=值"。它就是"将要发生的事"，
 			// 审批时最该看清的就是它。
+			//
+			// 长度上限给到 200 而不是几十：最常出现的参数是一条**文件路径**，
+			// 而路径最有信息量的部分在**末尾**（文件名）。卡在 60 字符会把
+			// `...uploads/20261013-224151-450eeb81.png` 截成 `...450eeb81.pn…`，
+			// 于是"要动哪个文件"这件事反而看不清了——那正是显示参数的意义所在。
+			// 面板是整宽的、样式里也开了 word-break，长一点会换行而不是溢出。
 			argsText(args) {
 				if (!args) return ''
 				const parts = Object.keys(args).map((key) => {
 					let value = String(args[key]).replace(/\s+/g, ' ')
-					if (value.length > 60) value = value.slice(0, 60) + '…'
+					if (value.length > 200) value = value.slice(0, 200) + '…'
 					return key + '=' + value
 				})
 				return parts.join('，')
@@ -414,9 +482,44 @@
 		padding: 12rpx;
 	}
 
+	.pick {
+		margin: 0 8rpx 0 0;
+		font-size: 26rpx;
+	}
+
 	.send {
 		margin: 0;
 		font-size: 28rpx;
+	}
+
+	.attach {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		background-color: #ffffff;
+		border-radius: 12rpx;
+		padding: 10rpx 16rpx;
+		margin-top: 12rpx;
+	}
+
+	.thumb {
+		width: 96rpx;
+		height: 96rpx;
+		border-radius: 8rpx;
+		background-color: #f2f2f2;
+	}
+
+	.attach-name {
+		flex: 1;
+		font-size: 24rpx;
+		color: #7a7a7a;
+		margin-left: 16rpx;
+	}
+
+	.attach-remove {
+		font-size: 24rpx;
+		color: #b3261e;
+		padding: 8rpx 12rpx;
 	}
 
 	.approval {

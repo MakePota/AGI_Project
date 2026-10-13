@@ -61,6 +61,7 @@
 | [0014](0014-split-server-and-agent.md) | 拆分为 Server 与 Agent，Agent 提供内部服务 API | 已采用 |
 | [0015](0015-interrupt-as-queryable-state.md) | 「等待批准」是可查询的状态，不是挂着的连接 | 已采用 |
 | [0016](0016-server-stack-selection.md) | 服务化选型：Java/Spring、MySQL、uni-app、SSE（含推迟组件的触发条件） | 已采用 |
+| [0017](0017-image-upload-without-object-storage.md) | 图片上传不走对象存储：存在 Agent 本机，路径经目标文本传递 | 已采用 |
 
 > `AGI_Client`、`AGI_Server` 将来各自建立自己的 `docs/decisions/`。
 > 只有真正跨子项目的决策才需要提到根目录，不要为了统一而统一。

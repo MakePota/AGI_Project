@@ -3,14 +3,15 @@
 **没有认证、没有界面**。这是 ADR 0014 重新划定的边界：Agent 提供**内部服务 API**，
 但仍然不承担用户认证、不提供客户端页面。
 
-四个端点：
+端点：
 
-=======================  ==============================================
-`POST /tasks`            建任务并开跑，立刻返回
-`GET  /tasks/{id}`       当前状态（`approval` 非空就是"正在等你批准"）
-`GET  /tasks/{id}/events` SSE 事件流（可选，只是免轮询的优化）
-`POST /tasks/{id}/approval`  提交审批决定并恢复执行
-=======================  ==============================================
+=========================  ============================================
+`POST /tasks`              建任务并开跑，立刻返回
+`GET  /tasks/{id}`         当前状态（`approval` 非空就是"正在等你批准"）
+`GET  /tasks/{id}/events`  SSE 事件流（可选，只是免轮询的优化）
+`POST /tasks/{id}/approval` 提交审批决定并恢复执行
+`POST /uploads`            收下一张图片并存到本机，返回路径
+=========================  ============================================
 
 **为什么 SSE 与状态查询是两条独立的路**：审批语义不挂在连接上（ADR 0015）。
 SSE 断掉、或者客户端压根不用它，靠 `GET /tasks/{id}` 也能完整走完全流程。
@@ -25,15 +26,17 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from agi_agent.api.contract import TaskRef
+from agi_agent.api.contract import TaskRef, UploadResult
 from agi_agent.api.runner import TaskRunner
+from agi_agent.api.uploads import UploadRejected, save_image
 from agi_agent.config import CHECKPOINT_DB
 from agi_agent.graph.builder import build_graph
 from agi_agent.graph.checkpoint import sqlite_checkpointer
+from agi_agent.images import MAX_IMAGE_BYTES
 
 #: SSE 轮询间隔。事件本来就产生于秒级动作，0.25 秒的粒度在体感上就是实时的，
 #: 换来的是不必做跨线程唤醒（工作线程往队列里放数据、asyncio 侧负责取，
@@ -126,6 +129,31 @@ def create_app() -> FastAPI:
             # no-cache 防止中间层缓存事件，X-Accel-Buffering 明确让 nginx 别缓冲。
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.post("/uploads", response_model=UploadResult)
+    async def upload_image(file: UploadFile = File(...)) -> dict:
+        """收下一张图片并存到本机，返回它的路径。
+
+        路径随后会写进任务目标文本，由 planner 交给图像工具去读——
+        图片**不经过任何外部存储**（见 `uploads.py` 里关于 OSS 的说明）。
+
+        **分块读、超限立刻中止**，而不是 `await file.read()` 一次读完：
+        后者会把整个请求体灌进内存，一个超大的上传就能把进程拖垮；
+        而且等它读完再判断大小，伤害已经造成了（Starlette 没有内置的请求体上限）。
+        """
+        data = bytearray()
+        while chunk := await file.read(64 * 1024):
+            data.extend(chunk)
+            if len(data) > MAX_IMAGE_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"图片太大：超过 {MAX_IMAGE_BYTES:,} 字节的上限，已中止接收。",
+                )
+        try:
+            return save_image(bytes(data))
+        except UploadRejected as exc:
+            # 400 而不是 500：这是调用方给的东西不对，不是服务端故障。
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return app
 

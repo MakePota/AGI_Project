@@ -40,6 +40,15 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  servlet:
+    multipart:
+      # 上限给到 8MB 是**刻意比 Agent 的 5MB 松**：这样 5～8MB 的图片会走到 Agent 那边，
+      # 由它给出准确的原因（"收到 6,123,456 字节，上限是 5,000,000"）；
+      # 只有超过 8MB 才由 Spring 在这里就拒掉（返回 413）。
+      # 反过来把这里设得比 Agent 紧的话，用户只会看到一句笼统的"超过限制"。
+      max-file-size: 8MB
+      max-request-size: 10MB
+
   # 明确用 Servlet（Spring MVC）+ SseEmitter 给前端推事件。
   # 依赖里同时有 webflux（那是为了 WebClient 消费 Agent 的流），
   # 不写这一行它会按 classpath 自己猜；显式声明可以避免"某天加了个依赖，

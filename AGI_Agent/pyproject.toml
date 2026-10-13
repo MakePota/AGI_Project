@@ -16,6 +16,7 @@ dependencies = [
     "playwright>=1.63.0",
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.32",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -60,6 +61,20 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 # 规则本身要留着（它确实能发现已经不起作用的 noqa），但处理方式必须由人判断：
 # 正确做法是**去掉 noqa、保留解释**，而不是把解释一起扔掉。
 unfixable = ["RUF100"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI 的参数声明（`file: UploadFile = File(...)`）本来就是在默认值位置调用函数，
+# 那是它的既定写法，不是"可变默认值"那个坑。登记成"不可变调用"之后 B008 不再误报它们，
+# 而**其它**在默认值里调函数的写法照样会被拦住——这比整条关掉 B008 精确得多。
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+]
 
 # 刻意**没有** per-file-ignores：实测在这个规则集下，tests/ 与 src/ 一样干净，
 # 不需要为测试目录开豁免。将来真出现需要豁免的地方，再按具体情况加，

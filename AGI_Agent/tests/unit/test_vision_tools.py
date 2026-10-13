@@ -11,17 +11,16 @@ from __future__ import annotations
 
 import pytest
 
+from agi_agent.images import MAX_IMAGE_BYTES, sniff_mime
 from agi_agent.policies.risk import assign_risk, requires_approval
 from agi_agent.schemas import Plan, PlanStep, RiskLevel
 from agi_agent.tools import get as get_tool
 from agi_agent.tools.builtin.vision import (
-    _MAX_IMAGE_BYTES,
     _as_text,
     _check_image_bytes,
     _classify_provider_error,
     _content_blocks,
     _load_image,
-    _sniff_mime,
     _to_data_url,
 )
 from agi_agent.tools.errors import PreconditionError, ToolError
@@ -57,19 +56,19 @@ class _FakeProviderError(Exception):
     ],
 )
 def test_sniff_mime_recognizes_supported_formats(data: bytes, expected: str) -> None:
-    assert _sniff_mime(data) == expected
+    assert sniff_mime(data) == expected
 
 
 def test_sniff_mime_rejects_unknown_bytes() -> None:
     # 一段普通文本，以及"RIFF 但不是 WEBP"（AVI 也以 RIFF 开头）——后者是最容易误判的。
-    assert _sniff_mime("这是一个文本文件".encode()) is None
-    assert _sniff_mime(b"RIFF" + b"\x00" * 4 + b"AVI " + b"\x00" * 32) is None
+    assert sniff_mime("这是一个文本文件".encode()) is None
+    assert sniff_mime(b"RIFF" + b"\x00" * 4 + b"AVI " + b"\x00" * 32) is None
 
 
 def test_sniff_mime_is_safe_on_short_input() -> None:
     # 短于 12 字节时不能越界抛 IndexError——切片本身安全，这里是把它钉住。
-    assert _sniff_mime(b"RI") is None
-    assert _sniff_mime(b"") is None
+    assert sniff_mime(b"RI") is None
+    assert sniff_mime(b"") is None
 
 
 # --------------------------------------------------------------------------
@@ -87,13 +86,13 @@ def test_check_image_bytes_rejects_empty_file() -> None:
 
 
 def test_check_image_bytes_reports_both_sizes_when_too_large() -> None:
-    oversized = _PNG + b"\x00" * _MAX_IMAGE_BYTES
+    oversized = _PNG + b"\x00" * MAX_IMAGE_BYTES
     with pytest.raises(ToolError) as excinfo:
         _check_image_bytes(oversized, "big.png")
     message = str(excinfo.value)
     # 报错必须给出实际字节数与上限——否则用户不知道该缩到多小。
     assert f"{len(oversized):,}" in message
-    assert f"{_MAX_IMAGE_BYTES:,}" in message
+    assert f"{MAX_IMAGE_BYTES:,}" in message
 
 
 def test_check_image_bytes_rejects_non_image_payload() -> None:

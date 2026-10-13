@@ -4,9 +4,12 @@ import com.agiproject.server.config.AgentProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -50,12 +53,13 @@ public class AgentClient {
 
     /** 建任务。Agent 立刻返回，任务在它那边排队执行。 */
     public AgentContract.AgentTask createTask(String goal) {
-        return callAgent(client.post().uri("/tasks").bodyValue(Map.of("goal", goal)));
+        return call(client.post().uri("/tasks").bodyValue(Map.of("goal", goal)),
+                AgentContract.AgentTask.class);
     }
 
     /** 查任务当前状态——**这是唯一的事实来源**，服务端存的只是镜像。 */
     public AgentContract.AgentTask getTask(String taskId) {
-        return callAgent(client.get().uri("/tasks/{id}", taskId));
+        return call(client.get().uri("/tasks/{id}", taskId), AgentContract.AgentTask.class);
     }
 
     /** 提交人工审批决定。 */
@@ -65,7 +69,30 @@ public class AgentClient {
         Map<String, Object> body = new HashMap<>();
         body.put("approved", approved);
         body.put("reason", reason);
-        return callAgent(client.post().uri("/tasks/{id}/approval", taskId).bodyValue(body));
+        return call(client.post().uri("/tasks/{id}/approval", taskId).bodyValue(body),
+                AgentContract.AgentTask.class);
+    }
+
+    /**
+     * 把一张图片转交给 Agent 保存。
+     *
+     * <p><b>本服务只是管道</b>：它不解析图片、不决定存哪、也不记录路径。
+     * 图片归 Agent 管（那是唯一要用它的地方），服务端知道得越少越好——
+     * 这样 Agent 将来把存储换成对象存储时，这边一行都不用改。
+     */
+    public AgentContract.UploadResult uploadImage(byte[] data, String filename) {
+        MultipartBodyBuilder builder = new MultipartBodyBuilder();
+        builder.part("file", new ByteArrayResource(data) {
+            @Override
+            public String getFilename() {
+                return filename == null || filename.isBlank() ? "upload" : filename;
+            }
+        });
+
+        return call(client.post().uri("/uploads")
+                        .contentType(MediaType.MULTIPART_FORM_DATA)
+                        .body(BodyInserters.fromMultipartData(builder.build())),
+                AgentContract.UploadResult.class);
     }
 
     /**
@@ -94,17 +121,12 @@ public class AgentClient {
                                 "事件流中断：无法连接智能体服务（" + properties.baseUrl() + "）", ex));
     }
 
-    /**
-     * 三个非流式调用共用的出口。
-     *
-     * <p>它们都返回 {@code AgentTask}，所以不做泛型；需要第二种返回类型时再泛化，
-     * 现在为一个假想的未来加类型参数，只会让调用点更难读。
-     */
-    private AgentContract.AgentTask callAgent(WebClient.RequestHeadersSpec<?> spec) {
+    /** 所有非流式调用共用的出口：发请求、解析成给定类型、把各种失败翻译成本服务的异常。 */
+    private <T> T call(WebClient.RequestHeadersSpec<?> spec, Class<T> type) {
         Duration timeout = Duration.ofMillis(properties.requestTimeoutMs());
         try {
             return spec.retrieve()
-                    .bodyToMono(AgentContract.AgentTask.class)
+                    .bodyToMono(type)
                     .block(timeout);
         } catch (WebClientResponseException ex) {
             throw translate(ex);
@@ -128,7 +150,14 @@ public class AgentClient {
         return switch (status) {
             case 404 -> new NoSuchElementException("智能体侧没有这个任务");
             case 409 -> new IllegalStateException("该任务当前不在等待批准，可能已经被处理过");
-            default -> new AgentUnavailableException("智能体服务返回 HTTP " + status + "：" + detail);
+            // 4xx 说明**调用方给的东西不对**（比如传了个不是图片的文件），
+            // 用 IllegalArgumentException 传到异常处理器那边变成 400。
+            // 注意 413（图片过大）也被归到这一类：状态码降成了 400，
+            // 但正文里带着 Agent 给的准确原因，用户看到的解释是清楚的。
+            case 413 -> new IllegalArgumentException(detail);
+            default -> status >= 400 && status < 500
+                    ? new IllegalArgumentException(detail)
+                    : new AgentUnavailableException("智能体服务返回 HTTP " + status + "：" + detail);
         };
     }
 }

@@ -66,6 +66,42 @@ export function decideApproval(taskId, approved, reason) {
 }
 
 /**
+ * 上传一张图片，返回它在**引擎那一侧**的路径。
+ *
+ * 这个路径随后会写进任务目标文本——图片本身不离开这台机器，
+ * 也不需要对象存储（见 AGI_Agent 的 `api/uploads.py` 里的说明）。
+ *
+ * @param {string} filePath uni.chooseImage 给的临时文件路径
+ */
+export function uploadImage(filePath) {
+  return new Promise((resolve, reject) => {
+    uni.uploadFile({
+      url: API_BASE + '/api/uploads',
+      filePath,
+      name: 'file',
+      timeout: 60000,
+      success: (res) => {
+        // uni.uploadFile 的 data 是**字符串**（不像 uni.request 会自动解析 JSON），
+        // 所以这里必须自己 parse。忘了这一点的表现是"把一个字符串当对象用"，
+        // 而且不会报错，只会在取值时得到 undefined。
+        let payload = null
+        try {
+          payload = JSON.parse(res.data)
+        } catch (err) {
+          payload = null
+        }
+        if (res.statusCode >= 200 && res.statusCode < 300 && payload) {
+          resolve(payload)
+        } else {
+          reject(new Error((payload && payload.detail) || `上传失败（HTTP ${res.statusCode}）`))
+        }
+      },
+      fail: (err) => reject(new Error('上传失败：' + (err.errMsg || '未知原因')))
+    })
+  })
+}
+
+/**
  * 订阅任务事件流。
  *
  * **仅 H5**。浏览器有原生的 EventSource，直接用它最省事；

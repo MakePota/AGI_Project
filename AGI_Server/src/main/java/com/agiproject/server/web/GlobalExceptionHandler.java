@@ -9,6 +9,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.net.URI;
@@ -83,6 +84,20 @@ public class GlobalExceptionHandler {
         // 请求了一个没有映射的路径。不处理的话会落到下面的兜底变成 500，
         // 而"路径写错了"是 404——报 500 会让人以为服务出了问题。
         return problem(HttpStatus.NOT_FOUND, "接口不存在", "请检查请求路径：" + ex.getResourcePath());
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    ProblemDetail handleBadArgument(IllegalArgumentException ex) {
+        // 调用方给的东西不对：传了不是图片的文件、空文件，或者 Agent 那边判定的入参问题。
+        return problem(HttpStatus.BAD_REQUEST, "请求内容不合法", ex.getMessage());
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    ProblemDetail handleTooLarge(MaxUploadSizeExceededException ex) {
+        // 超过 Spring 自己那道闸（见 application.yml 的 multipart 上限）。
+        // 走到这里说明连 Agent 都没看到这个请求——所以要说清是本服务拒的、以及为什么。
+        return problem(HttpStatus.PAYLOAD_TOO_LARGE, "图片太大",
+                "上传的图片超过了本服务接收的上限（8MB）");
     }
 
     @ExceptionHandler(Exception.class)

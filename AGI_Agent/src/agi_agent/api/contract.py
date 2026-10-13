@@ -67,6 +67,20 @@ class TaskRef(SchemaModel):
     approval: ApprovalRequest | None = None
 
 
+class UploadResult(SchemaModel):
+    """一张已上传图片的位置与基本信息。
+
+    `path` 是**本机绝对路径（正斜杠）**，可以直接交给图像工具当参数。
+    之所以用正斜杠：它会出现在任务目标文本里、由模型抄进工具参数，
+    而反斜杠在文本与 JSON 里更容易被转义或吃掉；正斜杠在 Windows 上同样有效。
+    """
+
+    path: str
+    mime: str
+    size: int
+    name: str
+
+
 class TaskEvent(SchemaModel):
     """执行过程中的一条事件。
 

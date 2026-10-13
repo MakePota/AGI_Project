@@ -39,17 +39,12 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
 from agi_agent.config import settings
+from agi_agent.images import MAX_IMAGE_BYTES, sniff_mime
 from agi_agent.providers.llm import get_model
 from agi_agent.schemas import RiskLevel, Role
 from agi_agent.tools.builtin.files import resolve_readable_path
 from agi_agent.tools.errors import PreconditionError, ToolError
 from agi_agent.tools.registry import ToolSpec, register
-
-#: 图片体积上限。**这是本项目自己的自保上限，不是查证过的厂商限制**——
-#: 目的是给 base64 编码后的请求体（约放大 1.33 倍）定一个内存与上传时间的界，
-#: 避免一张几十 MB 的图把一次工具调用变成漫长的等待。实测一张 600x240 的 PNG
-#: 只占 154 个图像 token，正常截图远达不到这个上限。
-_MAX_IMAGE_BYTES = 5_000_000
 
 #: 报错信息里截断供应商响应，避免把整段 HTML/JSON 灌进上下文。
 _ERROR_TEXT_LIMIT = 300
@@ -66,38 +61,24 @@ def _short(text: object, limit: int = _ERROR_TEXT_LIMIT) -> str:
     return rendered if len(rendered) <= limit else rendered[:limit] + "…"
 
 
-def _sniff_mime(data: bytes) -> str | None:
-    """按文件头判断图片类型；认不出来返回 None。
-
-    看文件头而不是扩展名：扩展名是随手可以改的，文件头才是事实。
-    与 ``files.read_file`` 用 ``\\x00`` 判定二进制是同一个思路——看内容，不看名字。
-    """
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if data.startswith((b"GIF87a", b"GIF89a")):
-        return "image/gif"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
-
-
 def _check_image_bytes(data: bytes, path: str) -> str:
     """校验图片字节并返回 mime。**只吃 bytes、不碰文件系统。**
 
     刻意与路径解析分开，是为了能在单测里直接喂构造的字节——
     否则测"太大"和"格式不对"就得造真实图片文件、还要绕过目录沙箱。
+
+    体积与格式的**规则本身**在 ``agi_agent.images`` 里：上传接口用的是同一套。
+    这里只负责把失败翻译成面向"文件路径"的说法。
     """
     size = len(data)
     if size == 0:
         raise ToolError(f"文件是空的，没有可理解的内容：{path}")
-    if size > _MAX_IMAGE_BYTES:
+    if size > MAX_IMAGE_BYTES:
         raise ToolError(
-            f"图片太大：{path} 有 {size:,} 字节，上限是 {_MAX_IMAGE_BYTES:,} 字节。"
+            f"图片太大：{path} 有 {size:,} 字节，上限是 {MAX_IMAGE_BYTES:,} 字节。"
             "请先缩小或裁剪这张图再试。"
         )
-    mime = _sniff_mime(data)
+    mime = sniff_mime(data)
     if mime is None:
         raise ToolError(
             f"这不是受支持的图片：{path}。"
