@@ -43,7 +43,23 @@ public final class AgentContract {
             @JsonProperty("updated_at") String updatedAt,
             String result,
             String error,
-            AgentApproval approval
+            AgentApproval approval,
+            @JsonProperty("artifacts") List<AgentArtifact> artifacts
+    ) {
+    }
+
+    /**
+     * 一个已经落盘的产物（当前只有图片）。
+     *
+     * <p><b>只有名字，没有路径。</b> 文件位置由 Agent 的产物目录 + name 决定；
+     * 对外暴露绝对路径既没必要，也会把本机目录结构带进数据库和前端。
+     * {@code kind} 现在固定是 {@code image}，留着是为了将来加文件/音频时不用改契约。
+     */
+    public record AgentArtifact(
+            String name,
+            String mime,
+            long size,
+            String kind
     ) {
     }
 

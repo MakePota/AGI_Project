@@ -1,5 +1,6 @@
 package com.agiproject.server.config;
 
+import com.agiproject.server.task.ArtifactProperties;
 import io.netty.channel.ChannelOption;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -32,6 +33,30 @@ public class WebClientConfig {
                 .baseUrl(properties.baseUrl())
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(1 << 20))
+                .build();
+    }
+
+    /**
+     * 下载产物的专用客户端。
+     *
+     * <p><b>为什么不复用上面那个：</b> 它的单行缓冲上限是 1 MB，而生成出来的
+     * PNG 很容易超过这个数。超限时抛的是 {@code DataBufferLimitException}，
+     * 它继承 {@code IllegalStateException}——现有 {@code AgentClient.call()}
+     * 会把这类异常误翻译成“调用超时”，排查方向会被完全带偏。
+     *
+     * <p>单独一条链路还有一个好处：不必为了下载图片把 JSON/SSE 的缓冲上限
+     * 全局抬高，那会掩盖“上游返回了异常大的 JSON”这种真正的问题。
+     */
+    @Bean
+    WebClient agentArtifactWebClient(AgentProperties properties, ArtifactProperties artifacts) {
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, properties.connectTimeoutMs());
+
+        return WebClient.builder()
+                .baseUrl(properties.baseUrl())
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .codecs(codecs -> codecs.defaultCodecs()
+                        .maxInMemorySize(Math.toIntExact(artifacts.maxBytes())))
                 .build();
     }
 }

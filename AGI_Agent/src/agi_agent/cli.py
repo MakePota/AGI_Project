@@ -12,6 +12,7 @@ import sys
 
 from langgraph.types import Command
 
+from agi_agent.artifacts import artifact_dir
 from agi_agent.config import CHECKPOINT_DB
 from agi_agent.graph.builder import build_graph
 from agi_agent.graph.checkpoint import sqlite_checkpointer
@@ -53,6 +54,10 @@ def _report(update: object) -> None:
         detail = call.result if call.status is ToolCallStatus.SUCCEEDED else call.error
         if detail:
             print(f"      {str(detail).splitlines()[0][:140]}")
+        # 产物的名字本身在 result 里，但终端里最有用的是“文件到底在哪”，
+        # 所以这里补一行绝对路径——用户可以直接打开它。
+        for artifact in call.artifacts:
+            print(f"      产物：{artifact_dir() / artifact.name}")
 
 
 def _drive(graph, config, graph_input) -> str:

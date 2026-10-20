@@ -57,6 +57,21 @@ export function getTask(taskId) {
   return request('GET', `/api/tasks/${taskId}`)
 }
 
+/**
+ * 生成产物（图片）的地址。
+ *
+ * **必须是绝对地址**：H5 跑在 HBuilderX 的开发服务器上（通常是 5173），
+ * 与后端 8090 不同源。写成 `/api/tasks/...` 会请求到开发服务器自己，
+ * 结果是一个 404 的破图，而不是后端的图片。
+ *
+ * 路径里带 taskId，是为了让服务端校验“这张图确实属于这个任务”，
+ * 而不是让任何知道文件名的人都能取到任意产物。
+ */
+export function artifactUrl(taskId, name) {
+  return API_BASE + '/api/tasks/' + encodeURIComponent(taskId)
+    + '/artifacts/' + encodeURIComponent(name)
+}
+
 export function listTasks() {
   return request('GET', '/api/tasks')
 }

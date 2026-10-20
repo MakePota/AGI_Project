@@ -8,9 +8,18 @@
 		<view v-if="error" class="error">{{ error }}</view>
 
 		<view class="composer">
-			<input class="input" v-model="goal" :disabled="busy"
-				placeholder="说一件要做的事，例如：列出当前目录下有哪些文件" confirm-type="send"
-				@confirm="submit" />
+			<!--
+				**maxlength 必须显式写。** uni-app 的输入组件默认 maxlength=140，
+				不写就会在 140 字处**静默截断**——不报错、不提示，只是用户粘贴的
+				长提示词少了一截。上限与 Server 的 @Size(max=2000) 对齐；带图片时
+				buildGoal 还会追加一段路径说明，所以留出 200 字余量。
+
+				**用 textarea，不要加 @confirm / confirm-type。** 任务描述经常带编号
+				和分段；在多行输入里 Enter 应该是换行，提交交给右侧按钮。
+				加上 confirm-type 会让用户想换行时直接把任务发了出去。
+			-->
+			<textarea class="input" v-model="goal" :disabled="busy" :maxlength="goalLimit"
+				:show-confirm-bar="false" placeholder="说一件要做的事，可换行" />
 			<button class="pick" size="mini" :disabled="busy" @click="chooseImage">选图</button>
 			<button class="send" type="primary" :loading="busy" :disabled="!canSubmit || busy"
 				@click="submit">发送</button>
@@ -51,9 +60,17 @@
 			</view>
 		</view>
 
-		<view v-if="result" class="result">
+		<!--
+			结果区。文本是模型的最终回复；图片是**结构化产物**，
+			不靠从回复文本里正则抠路径——那会把展示文案变成接口，
+			模型换个措辞就失效。
+		-->
+		<view v-if="result || artifacts.length" class="result">
 			<text class="result-title">结果</text>
-			<text class="result-text">{{ result }}</text>
+			<text v-if="result" class="result-text">{{ result }}</text>
+			<image v-for="item in artifacts" :key="item.name" class="artifact-image"
+				:src="artifactSrc(item.name)" mode="widthFix"
+				@click="previewArtifact(item)" @error="onArtifactError" />
 		</view>
 
 		<scroll-view class="events" scroll-y :scroll-into-view="scrollTarget">
@@ -73,6 +90,7 @@
 		decideApproval,
 		subscribeEvents,
 		uploadImage,
+		artifactUrl,
 		TERMINAL_STATUSES
 	} from '@/api/tasks.js'
 
@@ -124,6 +142,8 @@
 				events: [],
 				approval: null,
 				result: '',
+				// 任务产物（当前只有图片）。来自后端的结构化字段，不从 result 文本解析。
+				artifacts: [],
 				error: '',
 				busy: false,
 				subscription: null,
@@ -135,6 +155,17 @@
 			// 逼用户再打一句"描述这张图"没有意义。
 			canSubmit() {
 				return !!this.goal.trim() || !!this.imagePath
+			},
+			/**
+			 * 任务目标的输入上限。
+			 *
+			 * Server 的 CreateTaskRequest 是 @Size(max=2000)，数据库列也是
+			 * varchar(2000)。带图片时 buildGoal 会在目标后面追加一段路径说明
+			 * （约 80-100 字），所以留出 200 字余量，避免“输入刚好 2000、
+			 * 一选图就被后端 400 拒绝”。
+			 */
+			goalLimit() {
+				return this.imagePath ? 1800 : 2000
 			},
 			statusLabel() {
 				if (!this.taskId) return '未开始'
@@ -160,6 +191,14 @@
 			async submit() {
 				const typed = this.goal.trim()
 				if (this.busy || !this.canSubmit) return
+				// maxlength 只能挡住新输入；用户先粘一段长文、再选图时，
+				// 上限会从 2000 降到 1800，已有文本不会被自动截断。这里兜一次底，
+				// 让错误在本地出现，而不是走一趟后端再收到 400。
+				if (this.goal.length > this.goalLimit) {
+					this.error = `任务目标最多 ${this.goalLimit} 字`
+						+ (this.imagePath ? '（带图片时更短）' : '')
+					return
+				}
 
 				this.busy = true
 				this.error = ''
@@ -205,6 +244,21 @@
 
 			removeImage() {
 				this.imagePath = ''
+			},
+
+			// 产物地址的拼接逻辑统一放在 api/tasks.js（那里有 API_BASE），
+			// 页面不自己拼 URL——否则以后换后端地址时会有第二处要改。
+			artifactSrc(name) {
+				return artifactUrl(this.taskId, name)
+			},
+
+			previewArtifact(item) {
+				const urls = this.artifacts.map((a) => this.artifactSrc(a.name))
+				uni.previewImage({ urls, current: this.artifactSrc(item.name) })
+			},
+
+			onArtifactError() {
+				this.error = '图片加载失败：可能产物已被清理，或后端暂时取不到文件。'
 			},
 
 			/**
@@ -260,6 +314,11 @@
 				if (this.events.some((e) => e.seq === event.seq)) return
 				this.events.push(event)
 
+				// **不要在这里提前渲染产物。** 实测踩过：tool_finished 到达时文件
+				// 已经在 Agent 磁盘上，但 Server 的产物归属元数据要等任务结算后才
+				// 落库，于是图片 URL 返回 404；uni-image 组件会把这次失败缓存住，
+				// 终态后同一个 URL 不会重试，界面就永远是一块空白。
+				// 产物只在 refresh() 拿到权威的 TaskRef.artifacts 后渲染。
 				if (event.type === 'approval_requested') {
 					this.approval = {
 						summary: (event.payload && event.payload.summary) || '',
@@ -293,6 +352,8 @@
 					if (task.approval) this.approval = task.approval
 					if (task.result) this.result = task.result
 					if (task.error) this.error = task.error
+					// 覆盖而不是追加：切换任务/重新打开页面时，上一任务的图不能残留。
+					this.artifacts = Array.isArray(task.artifacts) ? task.artifacts : []
 					if (TERMINAL_STATUSES.includes(task.status)) {
 						this.approval = null
 						this.closeStream()
@@ -333,6 +394,7 @@
 				this.events = []
 				this.approval = null
 				this.result = ''
+				this.artifacts = []
 				this.error = ''
 			},
 
@@ -362,7 +424,11 @@
 				if (!args) return ''
 				const parts = Object.keys(args).map((key) => {
 					let value = String(args[key]).replace(/\s+/g, ' ')
-					if (value.length > 200) value = value.slice(0, 200) + '…'
+					// prompt 是图片生成的核心：用户批准的就是这段提示词，截到 200
+					// 只剩前半句。其余参数保持 200——路径最有信息量的部分是末尾，
+					// 再长就会把审批面板撑得没法读。
+					const limit = key === 'prompt' ? 500 : 200
+					if (value.length > limit) value = value.slice(0, limit) + '…'
 					return key + '=' + value
 				})
 				return parts.join('，')
@@ -470,7 +536,8 @@
 	.composer {
 		display: flex;
 		flex-direction: row;
-		align-items: center;
+		/* 多行输入框会长高，按钮贴在底部比垂直居中更自然。 */
+		align-items: flex-end;
 		background-color: #ffffff;
 		border-radius: 12rpx;
 		padding: 8rpx;
@@ -480,6 +547,17 @@
 		flex: 1;
 		font-size: 28rpx;
 		padding: 12rpx;
+		/* 固定约 4 行高；再长就在框内滚动，不要把整个页面顶下去。 */
+		height: 160rpx;
+		line-height: 1.5;
+		box-sizing: border-box;
+	}
+
+	/* uni-app 的 <textarea> 是自定义组件，内层才是原生 textarea。
+	   让内层撑满外层，否则 H5 下高度可能不生效。 */
+	.input textarea {
+		height: 100%;
+		box-sizing: border-box;
 	}
 
 	.pick {
@@ -608,6 +686,14 @@
 		font-size: 28rpx;
 		color: #222222;
 		white-space: pre-wrap;
+	}
+
+	.artifact-image {
+		display: block;
+		width: 100%;
+		margin-top: 12rpx;
+		border-radius: 8rpx;
+		background-color: #f2f2f2;
 	}
 
 	.events {

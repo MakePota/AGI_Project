@@ -1,10 +1,14 @@
 package com.agiproject.server.agent;
 
 import com.agiproject.server.config.AgentProperties;
+import com.agiproject.server.task.ArtifactNotFoundException;
+import com.agiproject.server.task.ArtifactTooLargeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.http.codec.ServerSentEvent;
@@ -44,10 +48,14 @@ public class AgentClient {
     private static final int ERROR_BODY_LIMIT = 300;
 
     private final WebClient client;
+    private final WebClient artifactClient;
     private final AgentProperties properties;
 
-    public AgentClient(WebClient agentWebClient, AgentProperties properties) {
+    public AgentClient(@Qualifier("agentWebClient") WebClient agentWebClient,
+                       @Qualifier("agentArtifactWebClient") WebClient agentArtifactWebClient,
+                       AgentProperties properties) {
         this.client = agentWebClient;
+        this.artifactClient = agentArtifactWebClient;
         this.properties = properties;
     }
 
@@ -93,6 +101,61 @@ public class AgentClient {
                         .contentType(MediaType.MULTIPART_FORM_DATA)
                         .body(BodyInserters.fromMultipartData(builder.build())),
                 AgentContract.UploadResult.class);
+    }
+
+    /**
+     * 从 Agent 下载一个产物文件。
+     *
+     * <p><b>刻意不复用 {@link #call}：</b> 那个方法把整个响应体读进内存、
+     * 用普通请求的 15 秒超时，并且把 {@code IllegalStateException} 一律翻译成
+     * “超时”。而 {@code DataBufferLimitException} 正是它的子类——复用会把
+     * “响应太大”误报成“超时”，排查方向完全跑偏。
+     *
+     * <p>这里的异常分工：产物不存在 -> 404；Agent 连不上或 5xx -> 503；
+     * 超过缓冲上限 -> 502。**不要用 IllegalStateException 表示前两者**，
+     * 全局异常处理器会把它翻成 409“状态冲突”。
+     */
+    public byte[] downloadArtifact(String name) {
+        Duration timeout = Duration.ofMillis(properties.artifactTimeoutMs());
+        try {
+            byte[] data = artifactClient.get()
+                    .uri("/artifacts/{name}", name)
+                    .retrieve()
+                    .bodyToMono(byte[].class)
+                    .block(timeout);
+            if (data == null || data.length == 0) {
+                throw new AgentUnavailableException("智能体服务返回了空的产物响应");
+            }
+            return data;
+        } catch (DataBufferLimitException ex) {
+            // 必须排在 IllegalStateException 之前：它是它的子类。
+            throw new ArtifactTooLargeException(
+                    "智能体返回的产物超过了本服务的缓冲上限（见 agi.artifacts.max-bytes）");
+        } catch (WebClientResponseException ex) {
+            int status = ex.getStatusCode().value();
+            if (status == 404) {
+                throw new ArtifactNotFoundException("智能体侧没有这个产物");
+            }
+            if (ex.getStatusCode().is5xxServerError()) {
+                throw new AgentUnavailableException(
+                        "智能体服务返回 HTTP " + status + "：" + errorPreview(ex), ex);
+            }
+            throw new ArtifactNotFoundException("产物不可用（HTTP " + status + "）");
+        } catch (WebClientRequestException ex) {
+            throw new AgentUnavailableException(
+                    "无法连接智能体服务（" + properties.baseUrl() + "）：" + ex.getMessage(), ex);
+        } catch (IllegalStateException ex) {
+            // block(Duration) 超时抛的就是它。
+            throw new AgentUnavailableException(
+                    "下载产物超时（超过 " + properties.artifactTimeoutMs() + " 毫秒）", ex);
+        }
+    }
+
+    private static String errorPreview(WebClientResponseException ex) {
+        String body = ex.getResponseBodyAsString();
+        return body.length() > ERROR_BODY_LIMIT
+                ? body.substring(0, ERROR_BODY_LIMIT) + "…"
+                : body;
     }
 
     /**

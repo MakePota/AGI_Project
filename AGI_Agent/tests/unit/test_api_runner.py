@@ -22,6 +22,7 @@ import pytest
 from agi_agent.api.contract import TaskRef
 from agi_agent.api.runner import TaskRunner
 from agi_agent.schemas import (
+    Artifact,
     EventType,
     Plan,
     PlanStep,
@@ -481,6 +482,62 @@ def test_worker_survives_a_crashing_task(runner_factory) -> None:
     assert runner.get(second).status is TaskStatus.COMPLETED
 
 
+def test_artifacts_flow_from_tool_call_to_task_ref(runner_factory) -> None:
+    """产物要从 ToolCall 一路走到 TaskRef，并在事件里也可见。
+
+    界面显示图片靠两条路：终态时读 `TaskRef.artifacts`（权威），
+    执行过程中读 `TOOL_FINISHED` 的 payload（提前显示）。两条都必须有。
+    """
+    artifact = Artifact(
+        name="20261020-120000-deadbeef.png",
+        mime="image/png",
+        size=12_345,
+    )
+    call = ToolCall(
+        task_id="t",
+        step_index=0,
+        tool="image.generate",
+        arguments={"prompt": "一只猫"},
+        risk=RiskLevel.WRITE,
+        status=ToolCallStatus.SUCCEEDED,
+        result="图片已生成：20261020-120000-deadbeef.png",
+        artifacts=[artifact],
+    )
+    done = _done_values(TaskStatus.COMPLETED, "完成")
+    done["task"] = done["task"].model_copy(update={"artifacts": [artifact]})
+
+    runner = runner_factory(
+        _FakeGraph(
+            [
+                _Round(
+                    [("updates", {"executor": {"tool_calls": [call]}})],
+                    done,
+                )
+            ]
+        )
+    )
+    ref = runner.submit("画一只猫")
+    assert _wait(lambda: runner.is_finished(ref.task_id))
+
+    final = runner.get(ref.task_id)
+    assert [item.name for item in final.artifacts] == [artifact.name]
+    assert final.artifacts[0].mime == "image/png"
+
+    finished = next(
+        event
+        for event in runner.events_since(ref.task_id)
+        if event.type is EventType.TOOL_FINISHED
+    )
+    assert finished.payload["artifacts"][0]["name"] == artifact.name
+
+    completed = next(
+        event
+        for event in runner.events_since(ref.task_id)
+        if event.type is EventType.TASK_COMPLETED
+    )
+    assert completed.payload["artifacts"][0]["name"] == artifact.name
+
+
 # --------------------------------------------------------------------------
 # 契约：对外形状不夹带内部字段
 # --------------------------------------------------------------------------
@@ -502,4 +559,5 @@ def test_task_ref_exposes_only_the_agreed_shape(runner_factory) -> None:
         "result",
         "error",
         "approval",
+        "artifacts",
     }

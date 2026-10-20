@@ -39,9 +39,15 @@ cd AGI_Server && mvn spring-boot:run           # 监听 127.0.0.1:8090
 | `GET` | `/api/tasks/{id}/events?since=` | SSE 事件流（薄转发；`since` 用于断线续传） |
 | `POST` | `/api/tasks/{id}/approval` | 提交人工审批决定 |
 | `POST` | `/api/uploads` | 上传一张图片（multipart，字段名 `file`），返回它在**引擎侧**的路径 |
+| `GET` | `/api/tasks/{id}/artifacts/{name}` | 取任务产物（图片）；**按任务校验归属**，文件缓存在本机 |
 
 `/api/uploads` 是**纯转发**：本服务不保存上传的文件，由 `AGI_Agent` 收下
 （图片归它管，读图的也是它）。这样它将来换存储方式，这边一行都不用改。
+
+`/api/tasks/{id}/artifacts/{name}` 则**会缓存文件**：任务进入终态时本服务把图片从
+Agent 拉一份到 `AGI_Server/artifacts/{taskId}/`。原因是终态任务不再向 Agent 对齐，
+不缓存的话 Agent 一停机，用户刷新页面就看不到已经生成的结果。元数据也存在
+`task.artifacts` 列（V2 迁移），但**权威仍然在 Agent**，这里只是镜像。
 
 **响应形状与 `AGI_Agent` 的完全一致**（字段名都是 snake_case）。这不是巧合：
 本服务是薄转发层，同形意味着同一套脚本能验两个服务。
@@ -54,10 +60,13 @@ src/main/java/com/agiproject/server/
 ├── config/                     WebClient（含"不设读超时"的解释）、SSE 心跳线程池、配置绑定
 ├── agent/                      与 Agent 的跨服务契约 + 客户端（HTTP 状态码 → 本服务的异常）
 ├── task/                       实体 / 仓库 / 服务（镜像逻辑与"按需对齐"都在这里）
-└── web/                        控制器（含 SSE）+ 统一异常处理
+│                               ArtifactService 负责产物的本地缓存与路径校验
+└── web/                        控制器（含 SSE、产物下载）+ 统一异常处理
 src/main/resources/
 ├── application.yml             含多处"为什么这么设"的解释
-└── db/migration/V1__init.sql   表结构（Flyway）
+└── db/migration/
+    ├── V1__init.sql            任务表
+    └── V2__task_artifacts.sql  产物清单列
 ```
 
 ## 踩过的坑（都已写进对应文件的注释）
@@ -68,23 +77,30 @@ src/main/resources/
 | **`data:` 后面那个空格是可选的** | 换一个 SSE 实现后事件一条都收不到 | FastAPI 写 `data: {...}`，Spring 的 `SseEmitter` 写 `data:{...}`，两者都合法 |
 | **Spring Boot 默认绑 `0.0.0.0`** | 一个没有认证的服务对整个局域网开放 | 必须显式 `server.address: 127.0.0.1` |
 | **给上游的 SSE 加读超时** | 停着等人批准的任务会被莫名掐断 | 空闲不等于故障；超时只能给连接阶段 |
+| **在断开后再次 `emitter.complete()`** | 每次任务正常结束都留两条 ERROR 日志（全局异常处理器还试图往 `text/event-stream` 写 `ProblemDetail`） | 连接已不可用时 `complete()` 会再抛 `AsyncRequestNotUsableException`；必须用 `completeQuietly` 吞掉 |
+| **用 1 MiB 的 WebClient 下载图片** | 稍大的 PNG 会抛 `DataBufferLimitException`，而它继承 `IllegalStateException`，会被误翻成“超时” | 下载走单独的 `agentArtifactWebClient`（`agi.artifacts.max-bytes`），先捕获 `DataBufferLimitException` |
 
 ## 测试
 
 ```bash
-cd AGI_Server && mvn test          # 10 个单测：不启 Spring、不连库、不联网
+cd AGI_Server && mvn test          # 24 个单测：不启 Spring、不连库、不联网
 cd AGI_Agent && uv run python scripts/smoke_api.py --base-url http://127.0.0.1:8090/api
+cd AGI_Agent && uv run python scripts/smoke_artifacts.py --base-url http://127.0.0.1:8090/api --mode server
 ```
 
 第二个是**端到端**验证：建任务 → 轮询到"等待批准" → 提交审批 → 跑完，
 再核对 404/409 与事件序列。它与验证 Agent 用的是同一个脚本。
+第三个会**真实生成一张图片**（约 0.25 元），验证 `TaskRef.artifacts` 与产物下载端点。
 
 ## 要改它先看哪里
 
 | 想改什么 | 去哪 |
 | --- | --- |
 | 端口、数据库连接、Agent 地址与超时 | `src/main/resources/application.yml` |
-| 表结构 | 新增 `src/main/resources/db/migration/V2__*.sql`，**不要改 V1**（Flyway 会校验校验和） |
+| 表结构 | 新增 `src/main/resources/db/migration/V3__*.sql`，**不要改 V1/V2**（Flyway 会校验校验和） |
+| 产物缓存目录、单文件上限 | `application.yml` 的 `agi.artifacts`（`dir` / `max-bytes`） |
+| 产物下载、路径校验、原子写 | `task/ArtifactService.java`；下载在 `agent/AgentClient.downloadArtifact` |
+| 产物下载端点与 MIME 白名单 | `web/ArtifactController.java` |
 | 与 Agent 的字段映射 | `agent/AgentContract.java`（跨语言接缝，改这里要想清楚对端） |
 | HTTP 状态码、错误响应形状 | `web/GlobalExceptionHandler.java` |
 | "什么时候去问 Agent" | `task/TaskService.java`（**唯一**允许决定这件事的地方） |

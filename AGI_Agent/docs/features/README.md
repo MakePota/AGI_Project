@@ -82,6 +82,7 @@
 | [本地只读文件工具](local-file-tools.md) | 已完成 | `tools/builtin/files.py` | 目录沙箱 + 凭据黑名单 + 容量上限，三道边界 |
 | [Steam 工具](steam-tools.md) | 已完成 | `tools/builtin/steam.py` | 搜索、查价、购物车增删查；加购与删除是幂等的 `WRITE` 工具（不涉及结账支付） |
 | [图像理解工具](vision-tools.md) | 已完成 | `tools/builtin/vision.py` | 用千问读图；两个工具各绑一个模型档位，档位由注册表与 `config.toml` 决定 |
+| [图片生成](image-generation.md) | 已完成 | `tools/builtin/image.py`、`artifacts.py` | 文生图/图生图；生成后立即落盘，产物以结构化 artifact 经三层传到界面 |
 
 > **只有本目录是 `features/` 文档。** `AGI_Server` 与 `AGI_Client` 各自只有一个功能面
 > （转发任务 / 一个页面），它们的 `README` 已经把「怎么运转、要改它先看哪里」讲完了——

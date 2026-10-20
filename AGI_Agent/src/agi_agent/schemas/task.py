@@ -7,6 +7,7 @@ from enum import StrEnum
 
 from pydantic import Field
 
+from agi_agent.schemas.artifact import Artifact
 from agi_agent.schemas.common import SchemaModel, new_id, utc_now
 
 
@@ -42,5 +43,9 @@ class Task(SchemaModel):
     status: TaskStatus = TaskStatus.RECEIVED
     result: str | None = None
     error: str | None = None
+    #: 任务级产物清单。由 executor 把各次 ToolCall.artifacts 合并进来。
+    #: 放在 Task 上而不是 AgentState 上，是为了让“最终状态”只有一个来源：
+    #: checkpoint 读回 task 就能拿到全部产物，不必再遍历 tool_calls 去拼。
+    artifacts: list[Artifact] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

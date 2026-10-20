@@ -2,7 +2,7 @@
 
 > 用途：为人类开发者和不同 AI 工具提供稳定的项目上下文与任务交接。
 >
-> 最后更新：2026-10-13
+> 最后更新：2026-10-20
 >
 > 约束：本文档不记录 API Key、密码、Token、真实账号信息、私有 URL 或其他敏感数据；其中的状态描述应以源码、Git 状态和实际验证结果为准。
 
@@ -91,7 +91,7 @@ checkpointer**；业务数据（用户、任务列表）在 **Server 的数据�
 | 想了解 | 去哪 |
 | --- | --- |
 | 项目整体架构、技术栈、目录职责 | `AGI_Agent/docs/architecture.md` |
-| 为什么引入某个依赖、为什么否掉某个方案 | `AGI_Agent/docs/decisions/`（ADR，17 篇） |
+| 为什么引入某个依赖、为什么否掉某个方案 | `AGI_Agent/docs/decisions/`（ADR，18 篇） |
 | 某个功能怎么运转、要改它先看哪里 | `AGI_Agent/docs/features/` |
 
 几条**约束性质**的结论。先知道结论，需要细节再点进 ADR：
@@ -119,6 +119,9 @@ checkpointer**；业务数据（用户、任务列表）在 **Server 的数据�
   推迟的组件（MongoDB / Redis / Qdrant）各自写明触发条件，不许以"以后可能用得上"进来 → ADR 0016
 - **图片上传不走对象存储**：存在 Agent 本机的 `uploads/`（读图读的就是本机文件）。
   真正需要 OSS 的触发条件是**两个服务部署到不同机器**——那时才没有共享文件系统 → ADR 0017
+- **图片生成走千问 Qwen-Image-3.0 的原生同步端点**（旧域名的 OpenAI 兼容端点实测 404），
+  生成后立即下载落盘；产物以结构化 artifact 经 `TaskRef.artifacts` 传到 Server 与界面，
+  Server 缓存文件，Agent 停机后仍能看 → ADR 0018
 - `graph`（怎么思考）/ `tools`（能做什么）/ `policies`（允许做什么）三者必须分离 → `architecture.md`
 
 ## 5. 当前实际进度
@@ -140,13 +143,14 @@ checkpointer**；业务数据（用户、任务列表）在 **Server 的数据�
 | 「结果不确定」的写操作不再被重试 | ✅ 已修复并回归 | 一次复核失败曾让购物车出现 3 份同一游戏 → ADR 0010 |
 | 网络/登录问题当场停下并给出下一步 | ✅ 已实测 | 45 秒静默等待 → 8.6 秒明确报错；登录过期会在**点击前**被发现 → ADR 0011 |
 | CLI 过程输出（流式） | ✅ 已实测 | 工具调用在**开始前**就打印进度，不再是一个不动的窗口 |
-| 单元测试 | ✅ 161 个 | `uv run pytest`，不消耗任何 API 额度 |
+| 单元测试 | ✅ 225 个 | `uv run pytest`，不消耗任何 API 额度 |
 | 代码质量检查 | ✅ 已实测 | `uv run ruff check .` 全绿（首次开启时实测 786 条 → 逐条判定后修掉 8 条真问题） |
 | 换行符基线 | ✅ 已实测 | 根 `.gitattributes` 固定入库 LF；实测全仓 0 个 CRLF，不再依赖各机器的 `core.autocrlf` |
 | **图像理解（千问）** | ✅ 已实测 | 端到端：读一张写着随机数字的图，最终回复与图中数字**一致**；Key 缺失时正确**停下**（不进重规划）；只读任务未受影响 → ADR 0012 |
+| **图片生成（Qwen-Image-3.0）** | ✅ 已实测 | 文生图、图生图（1 张与 3 张参考图）均跑通；Agent / Server / H5 三层都验过；`TaskRef.artifacts` 非空，停掉 Agent 后 Server 仍能从本地缓存取图 → ADR 0018 |
 | **对外 HTTP 服务（Phase 1）** | ✅ 已实测 | `uv run agi-agent-api` 起服务，4 个端点；curl 实测：建任务 → 停下等人批准 → **断掉一切事件流后仍能查到审批、从另一条连接提交并跑完**；404/409 语义正确；任务串行（单测断言并发数恒为 1）→ ADR 0014/0015 |
-| **业务服务 AGI_Server（Phase 2）** | ✅ 已实测 | Java 21 + Spring Boot 4.1.1 + MySQL：任务 CRUD、JPA 持久化、Flyway 迁移、参数校验、统一异常、SSE 转发。**用与 Phase 1 同一个脚本端到端验过**（事件序列一致）；实测按需对齐（`received` → 走一次详情 → `completed`）、中文按 utf8mb4 正确存取；10 个 Java 单测不连库不联网 |
-| **界面 AGI_Client（Phase 3）** | ✅ 已实测 | uni-app / Vue 3 单页：输入任务、**选图上传**、看事件流、**审批面板（显示工具名与参数）**。**用真实浏览器（Playwright）端到端点过一遍**：发任务 → 审批弹出 → **刷新页面审批仍在** → 批准 → 跑完显示结果；零 JS 报错。详见 `AGI_Client/README.md` |
+| **业务服务 AGI_Server（Phase 2）** | ✅ 已实测 | Java 21 + Spring Boot 4.1.1 + MySQL：任务 CRUD、JPA 持久化、Flyway 迁移、参数校验、统一异常、SSE 转发。**用与 Phase 1 同一个脚本端到端验过**（事件序列一致）；实测按需对齐（`received` → 走一次详情 → `completed`）、中文按 utf8mb4 正确存取；24 个 Java 单测不连库不联网 |
+| **界面 AGI_Client（Phase 3）** | ✅ 已实测 | uni-app / Vue 3 单页：输入任务、**选图上传**、看事件流、**审批面板（显示工具名与参数）**、**结果图片**。**用真实浏览器（Playwright）端到端点过一遍**：发任务 → 审批弹出 → **刷新页面审批仍在** → 批准 → 跑完显示结果；零 JS 报错。详见 `AGI_Client/README.md` |
 | **图片上传（多模态从界面可用）** | ✅ 已实测 | 选图 → 经 Server 转发 → Agent 存本机 → 路径写进任务文本 → 千问读图。**实测：图里画着随机数字，界面返回的数字与图一致**（两次分别 1756 / 5102）。图片**不走对象存储** → ADR 0017 |
 
 关键入口（完整清单以实际目录为准，目录职责见 `AGI_Agent/docs/architecture.md`）：
@@ -156,15 +160,17 @@ AGI_Agent/
 ├── config.toml                  # 模型槽位 -> 模型绑定（可提交，不含密钥）
 ├── .env                         # DEEPSEEK_API_KEY、DASHSCOPE_API_KEY、AGI_BROWSER_PROXY，已被 .gitignore 忽略
 ├── docs/                        # architecture.md + decisions/(ADR) + features/
-├── scripts/steam_login.py       # Steam 人工登录辅助 + --verify
+├── scripts/                     # steam_login / smoke_api / smoke_artifacts / ui_smoke / probe_image_generation
+├── artifacts/                   # 生成的图片（运行时数据，已 gitignore）
 └── src/agi_agent/
     ├── cli.py                   # 入口
     ├── config.py                # 配置与常量读取
-    ├── schemas/                 # 稳定数据契约（6 个：task/plan/tool_call/approval/event/review）
+    ├── schemas/                 # 稳定数据契约（7 个：task/plan/tool_call/approval/event/review/artifact）
     ├── graph/                   # builder / state / checkpoint / nodes
     ├── api/                     # 对外 HTTP 接口（FastAPI）：contract / runner / app
-    ├── tools/                   # registry + errors + builtin(files, steam, vision, fake)
+    ├── tools/                   # registry + errors + result + builtin(files, steam, vision, image, fake)
     ├── providers/llm/           # 供应商注册表 + structured.py
+    ├── artifacts.py             # 生成产物的落盘与路径安全边界
     └── policies/                # risk.py
 ```
 
@@ -175,7 +181,8 @@ AGI_Agent/
 
 - ~~微信（个人版 UI 自动化）尚未开始~~ → **已调研并决定不做**，各条路线为何出局见 ADR 0013。
 - **MCP Client 层有意未实现**：目前没有出现「需要一个成熟第三方 MCP Server」的真实需求。
-  判据见 ADR 0006。
+  判据见 ADR 0006。图片生成调研过 `qwen-image-mcp`，但它是固定流程，按同一判据手写工具
+  （ADR 0018）——这不表示 MCP 层将来不需要，只是没有被这个需求逼出来。
 - `langgraph.json` 未创建；当前由自带 `cli.py` 驱动，暂不需要，理由见 `AGI_Agent/docs/architecture.md`。
 - `Ruff` **只做检查、不做格式化**（未启用 `ruff format`）：格式化会重排全部源文件，
   应单独一次提交，不要混进功能改动。规则集取舍写在 `AGI_Agent/pyproject.toml` 的注释里。
@@ -224,7 +231,18 @@ AGI_Agent/
 | OpenAI 兼容 Base URL | `https://dashscope.aliyuncs.com/compatible-mode/v1`（**必须带 `/compatible-mode/v1`**，与 DeepSeek 的写法不同） |
 | API Key 环境变量 | `DASHSCOPE_API_KEY` |
 
+**图片生成：千问 Qwen-Image-3.0** —— 另一个能力槽位，**同样不占用角色槽位**。
+
+| 项目 | 已确认值 |
+| --- | --- |
+| 模型 ID | `qwen-image-3.0-pro`（标准版 `qwen-image-3.0` 更便宜，改配置即可） |
+| 端点 | DashScope **原生同步** `/api/v1/services/aigc/multimodal-generation/generation` |
+| Base URL | `https://dashscope.aliyuncs.com`（**不要写 `/compatible-mode/v1`**；旧域名的兼容图片端点实测 404） |
+| API Key 环境变量 | `DASHSCOPE_API_KEY` |
+| 限流 / 计费 | Pro 1 RPM；1K 约 0.25 元/张、2K 约 0.5 元/张 |
+
 换供应商或换模型都只需改 `AGI_Agent/config.toml`（ADR 0002）。
+**图片生成槽位不能交给 `get_model`**——它只会造聊天模型（ADR 0018）。
 
 **明确不装**：`langchain`（meta 包，本项目用 LangGraph 编排，不需要）、
 `langchain-deepseek`（对 `deepseek-flash` 的覆盖未经核实，而 `ChatOpenAI` + `base_url` 路径已核实）。
@@ -337,6 +355,19 @@ AGI_Agent/
     **给客户端刻意不另开架构文档**：只有三个源文件，README 已经讲完，
     再写一份就是复制——「每个知识只写一处」这条比「文档门类齐全」重要。
 
+16. ✅ **图片生成（Qwen-Image-3.0，2026-10-20）**：一个工具 `image.generate` 同时支持
+    文生图与图生图（1-3 张本机参考图）；模型由 `Role.IMAGE_GENERATION` 静态绑定。
+    产物以结构化 artifact 经 `TaskRef.artifacts` 传到 Server 与界面，Server 持久化元数据
+    并缓存文件。**实测**：T2I、I2I、Agent API、Server API、H5 全部跑通；
+    停掉 Agent 后 Server 仍能取图。详见
+    [功能文档](AGI_Agent/docs/features/image-generation.md) 与
+    [ADR 0018](AGI_Agent/docs/decisions/0018-image-generation-with-artifacts.md)。
+    过程中修掉四个真实缺陷：`httpx.URL.host` 用错导致“生成成功后普通失败”、
+    reviewer 看不到工具参数、界面在 `tool_finished` 时提前渲染图片导致 404 被缓存、
+    **前端 `<input>` 默认 `maxlength=140` 静默截断长提示词**（237 字在“VR”处被切）。
+    输入上限现在显式对齐 Server 的 2000 字；带图片时 1800（给追加路径留余量）。
+    输入框已从单行 `<input>` 改为多行 `<textarea>`（Enter 换行、点“发送”提交）。
+
 **三层至此全部跑通，下一步待定。** 可选的几个方向：
 
 - **合起来发布**：把 H5 构建产物交给 Spring Boot 一起发（同源，省掉 CORS 与两个进程），
@@ -349,8 +380,10 @@ AGI_Agent/
 `AGI_Server/docker-compose.yml` 跑在 `127.0.0.1:3307`（刻意避开 3306 与其他项目冲突），
 密码在已被 gitignore 忽略的 `AGI_Server/.env` 里、**不写进 compose**。
 `~/.m2/settings.xml` 已配阿里云镜像（否则首次构建要下上百 MB）。
-前端由 HBuilderX 跑在 **5173**，命令行方式：`./cli.exe launch web --project AGI_Client`
-（`cli.exe` 需要 HBuilderX 本体处于运行状态）。
+前端由 HBuilderX 跑在 **5173**，命令行方式：`./cli.exe launch web --project <绝对路径>`
+（`cli.exe` 需要 HBuilderX 本体处于运行状态；**这条命令会一直占着终端**，要放后台跑）。
+本机的 HBuilderX 在 `E:\HBuilderX`，项目路径用 `E:\AGI_Project\AGI_Client`。
+Docker Desktop 没开时 MySQL 容器连不上，先启动它。
 `AGI_Client` 的页面已经写完并端到端验过（Phase 3），**可以正常改了**——
 改之前先看 `AGI_Client/README.md` 的「三个设计点」，那几条不是风格偏好，是踩出来的。
 
@@ -361,6 +394,15 @@ AGI_Agent/
 - 图像理解的错误分类里，**HTTP 400 与 429 两条分支尚未实测**（只实测到 401 与 404）。
   两条都是保守推断，`vision.py` 的 `_classify_provider_error` 里已就地在场标注。
   真撞上时按实况修正，不要照抄推断。
+- 图片生成的 **429（Pro 1 RPM）尚未自然撞上**；分类依据是文档，文案已写明“等约 60 秒”。
+  真撞上时记录实际响应，再修正 `image.py` 的 `_classify_http_error`。
+- **生成的图片不会自动清理**：`AGI_Agent/artifacts/` 与 `AGI_Server/artifacts/` 会持续增长。
+  本次只记录，不加定时任务。
+- **reviewer 看不到图片内容**：它只能确认“工具成功落盘”，不能判断画面是否符合要求。
+  真实验收仍需人工看图。
+- **planner 不能引用前一步的动态输出**：实测中它规划出过
+  `path="<image.generate 返回的新图产物路径>"` 这种占位符步骤，该步骤必然失败。
+  属 planner 既有局限，不在图片生成范围内修复。
 
 **已关闭的遗留（不要再花时间验证）**：
 

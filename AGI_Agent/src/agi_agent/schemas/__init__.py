@@ -4,6 +4,7 @@
 """
 
 from agi_agent.schemas.approval import Approval, ApprovalDecision
+from agi_agent.schemas.artifact import Artifact, ArtifactKind
 from agi_agent.schemas.common import (
     RiskLevel,
     Role,
@@ -20,6 +21,8 @@ from agi_agent.schemas.tool_call import ToolCall, ToolCallStatus
 __all__ = [
     "Approval",
     "ApprovalDecision",
+    "Artifact",
+    "ArtifactKind",
     "Event",
     "EventType",
     "Plan",

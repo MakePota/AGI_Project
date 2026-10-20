@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import Field
 
+from agi_agent.schemas.artifact import Artifact
 from agi_agent.schemas.common import RiskLevel, SchemaModel, new_id
 
 
@@ -42,5 +43,8 @@ class ToolCall(SchemaModel):
     status: ToolCallStatus = ToolCallStatus.PENDING
     result: Any | None = None
     error: str | None = None
+    #: 这次调用产出的文件。``result`` 仍是一段给人读的文本，产物在这里单独承载——
+    #: 两者分开的理由见 ``schemas/artifact.py`` 的模块注释。
+    artifacts: list[Artifact] = Field(default_factory=list)
     started_at: datetime | None = None
     finished_at: datetime | None = None

@@ -17,12 +17,16 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param eventTimeoutMs    事件流的最长等待。**别按"请求超时"理解它**——
  *                          任务可能长时间停在"等人批准"，期间流上只有心跳；
  *                          值给小了会把正常流程误杀。
+ * @param artifactTimeoutMs 下载产物（图片）的超时。**不能复用 requestTimeoutMs**：
+ *                          那个 15 秒是为“立刻返回”的接口设的，而这里要把一个
+ *                          可能几 MB 的文件完整读进内存。
  */
 @ConfigurationProperties(prefix = "agi.agent")
 public record AgentProperties(
         String baseUrl,
         int connectTimeoutMs,
         long requestTimeoutMs,
-        long eventTimeoutMs
+        long eventTimeoutMs,
+        long artifactTimeoutMs
 ) {
 }

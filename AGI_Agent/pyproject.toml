@@ -9,6 +9,9 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.143.0",
+    # 图片生成直接用 HTTP 调 DashScope 原生端点。虽然它早已作为依赖的依赖存在，
+    # 但代码直接 import 它，就应该直接声明——否则上游一换实现，我们会先坏在别处。
+    "httpx>=0.28.1",
     "langchain-core>=1.6.9",
     "langchain-openai>=1.7.0",
     "langgraph>=1.2.14",

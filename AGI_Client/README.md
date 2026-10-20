@@ -33,14 +33,15 @@ Spring Boot 一起发布（同源）时，把它改成空字符串即可。
 
 ## 现在有什么
 
-一个页面（`pages/index/index.vue`），四块内容：
+一个页面（`pages/index/index.vue`），五块内容：
 
 | 区域 | 作用 |
 | --- | --- |
 | 状态徽章 | 未开始 / 等你批准 / 执行中 / 已完成 / 已失败 / 需人工处理 |
-| 输入区 | 输入任务目标、**选一张图**、提交 |
+| 输入区 | **多行输入框**（Enter 换行，点“发送”提交）；最多 2000 字，带图片时 1800（给追加的路径说明留余量）；**选一张图** |
 | **审批面板** | 出现"等你批准"时弹出，列出**每一步的描述、工具名与参数**，并提供批准 / 拒绝 |
 | 执行过程 | 事件流，一行一条（收到 / 分诊 / 规划 / 待批准 / 调用中 / 调用完 / 审查通过 / 完成） |
+| **结果图片** | 任务生成图片时，结果区直接显示图片；点击可预览大图 |
 
 ### 图片是怎么走完这条链路的
 
@@ -53,6 +54,21 @@ Spring Boot 一起发布（同源）时，把它改成空字符串即可。
 图片**不经过任何外部存储**——读图工具读的是本机文件，没有必要先传出去
 （为什么不需要对象存储，见 ADR 0017）。**上传发生在点"发送"那一刻**：
 选了图又改主意不发，磁盘上不会多出文件。
+
+**生成结果走的是反方向**：
+
+```
+用户下达"画一张……" → 审批 → image.generate
+  → Agent 调千问、下载图片、存进自己的 artifacts/
+  → TaskRef.artifacts（只有 name / mime / size，没有路径或临时 URL）
+  → Server 镜像元数据，并把文件缓存到 AGI_Server/artifacts/{taskId}/
+  → 界面用 name 请求 GET /api/tasks/{taskId}/artifacts/{name}
+```
+
+**界面只在任务终态后渲染产物。** 不要在 `tool_finished` 事件到达时就渲染：
+那时文件已经在 Agent 磁盘上，但 Server 的产物归属元数据要等任务结算后才落库，
+图片 URL 会返回 404；`uni-image` 组件会把这次失败缓存住，终态后同一个 URL 不再重试。
+实测踩过，表现是结果区永远空白。
 
 ### 三个值得知道的设计点
 
@@ -81,12 +97,26 @@ Spring Boot 一起发布（同源）时，把它改成空字符串即可。
   实测通过，但不是硬保证。**什么现象说明它出问题了**：图片明明上传成功、审批里也显示了路径，
   但图像工具报"文件不存在"——那说明模型把路径抄错了。出现这种报错时，
   就该给 `Task` 加附件字段（把路径改成结构化传递），而不是继续调提示词。
-- **上传的图片不会被自动清理**，会一直留在 `AGI_Agent/uploads/` 里。
+- **任务目标最长 2000 字；带图片时 1800 字。** 上限与 Server 的
+  `CreateTaskRequest @Size(max=2000)` 和数据库列对齐。**`<textarea>` 的
+  `maxlength` 必须显式写**：uni-app 的输入组件默认 140，不写就会在 140 字处
+  **静默截断**（2026-10-20 实测一个 237 字的提示词在“VR”处被切）。
+  改输入框时别把它删掉。
+- **多行输入里 Enter 是换行，不是提交。** 提交只能点右侧“发送”；
+  不要给 `<textarea>` 加 `confirm-type`，否则用户想换行时会被直接发出去。
+- **上传的图片与生成图片都不会被自动清理**：前者留在 `AGI_Agent/uploads/`，
+  后者留在 `AGI_Agent/artifacts/` 和 `AGI_Server/artifacts/`。
+- **图片生成会花钱，Pro 限流 1 RPM**：连续生成任务之间要等约 60 秒。
+  界面不会替你等待，任务会以“需人工处理”结束并提示稍后再试。
+- **reviewer 看不到生成的画面**：它只能确认“工具成功落盘”，
+  画面是否符合要求仍需你自己看。
 
 ## 测试
 
 ```bash
 cd AGI_Agent && uv run python scripts/ui_smoke.py
+# 额外验证真实的图片生成（会花钱：约 0.25 元/张）
+cd AGI_Agent && uv run python scripts/ui_smoke.py --with-generation
 ```
 
 它用真实浏览器（Playwright）把上面的流程点一遍，包括"刷新后审批仍在"。
@@ -97,8 +127,9 @@ cd AGI_Agent && uv run python scripts/ui_smoke.py
 | 想改什么 | 去哪 |
 | --- | --- |
 | 后端地址 | `api/config.js`（唯一一处） |
-| 接口调用、事件订阅 | `api/tasks.js` |
+| 接口调用、事件订阅、产物地址 | `api/tasks.js`（`artifactUrl` 统一拼 `API_BASE`） |
 | 页面结构、样式、事件文案 | `pages/index/index.vue` |
+| 结果图片的渲染与预览 | `pages/index/index.vue` 的 `.result` 区、`artifactSrc`、`previewArtifact` |
 | 页面标题、路由 | `pages.json` |
 | App 名称、图标、appid | `manifest.json`（打包安卓时才需要填 appid） |
 
@@ -112,6 +143,7 @@ cd AGI_Agent && uv run python scripts/ui_smoke.py
 | 为什么"刷新不丢任务"能成立 | [ADR 0015](../AGI_Agent/docs/decisions/0015-interrupt-as-queryable-state.md) |
 | 为什么用 uni-app、为什么只做 H5 | [ADR 0016](../AGI_Agent/docs/decisions/0016-server-stack-selection.md) |
 | 图片为什么不走对象存储 | [ADR 0017](../AGI_Agent/docs/decisions/0017-image-upload-without-object-storage.md) |
+| 图片生成怎么运转、产物为什么在终态才渲染 | [功能文档](../AGI_Agent/docs/features/image-generation.md)、[ADR 0018](../AGI_Agent/docs/decisions/0018-image-generation-with-artifacts.md) |
 
 **本文件同时充当本项目的架构说明**：这一层**需要人手写和维护的只有三个文件**
 （`api/config.js` 配置 / `api/tasks.js` 接口 / `pages/index/index.vue` 页面），

@@ -2,14 +2,19 @@ package com.agiproject.server.task;
 
 import com.agiproject.server.agent.AgentClient;
 import com.agiproject.server.agent.AgentContract;
+import com.agiproject.server.agent.AgentContract.AgentArtifact;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 
 /**
  * 任务的业务逻辑：把 Agent 的答复抄进本地表，并在需要时把它们对齐。
@@ -41,10 +46,17 @@ public class TaskService {
 
     private final TaskRepository repository;
     private final AgentClient agentClient;
+    private final ArtifactService artifactService;
+    private final ObjectMapper objectMapper;
 
-    public TaskService(TaskRepository repository, AgentClient agentClient) {
+    public TaskService(TaskRepository repository,
+                       AgentClient agentClient,
+                       ArtifactService artifactService,
+                       ObjectMapper objectMapper) {
         this.repository = repository;
         this.agentClient = agentClient;
+        this.artifactService = artifactService;
+        this.objectMapper = objectMapper;
     }
 
     /** 建任务：交给 Agent，然后把它的答复抄进本地表。 */
@@ -53,14 +65,18 @@ public class TaskService {
 
         Instant now = Instant.now();
         Instant createdAt = parseInstant(created.createdAt(), now);
-        repository.save(new TaskEntity(
+        TaskEntity entity = new TaskEntity(
                 created.taskId(),
                 LOCAL_USER_ID,
                 created.goal() != null ? created.goal() : goal,
                 created.status(),
                 createdAt,
                 parseInstant(created.updatedAt(), createdAt)
-        ));
+        );
+        // 走同一个抄写点，而不是在这里手写 status/result —— 两处各写一份，
+        // 迟早会出现“建任务时没抄 artifacts、查任务时却有”这种不一致。
+        apply(entity, created);
+        repository.save(entity);
         log.info("已创建任务 {}（状态 {}）", created.taskId(), created.status());
         return created;
     }
@@ -137,7 +153,83 @@ public class TaskService {
         entity.setStatus(task.status());
         entity.setResult(task.result());
         entity.setError(task.error());
+        entity.setArtifacts(writeArtifacts(task.artifacts()));
         entity.setUpdatedAt(parseInstant(task.updatedAt(), Instant.now()));
+
+        // 任务进入终态时，尽力把图片文件也拉到本地缓存。
+        // 这一步失败**不能阻塞元数据镜像**：用户以后请求图片时
+        // ArtifactController 还会再试一次；而状态与结果丢了就再也补不回来。
+        if (TaskStatuses.isTerminal(task.status()) && task.artifacts() != null) {
+            for (AgentArtifact artifact : task.artifacts()) {
+                if (artifact == null) {
+                    continue;
+                }
+                try {
+                    artifactService.ensureStored(task.taskId(), artifact);
+                } catch (RuntimeException ex) {
+                    log.warn("缓存任务 {} 的产物 {} 失败：{}",
+                            task.taskId(), artifact.name(), ex.getMessage());
+                }
+            }
+        }
+    }
+
+    /**
+     * 找一个产物，返回它的元数据。
+     *
+     * <p>非终态任务先向 Agent 对齐一次：产物可能刚生成，本地镜像还没抄到。
+     * 终态任务不再问上游——这正是 artifacts 必须持久化的原因。
+     */
+    public AgentArtifact getArtifact(String taskId, String name) {
+        TaskEntity entity = require(taskId);
+        AgentArtifact found = findArtifact(entity, name);
+        if (found == null && !TaskStatuses.isTerminal(entity.getStatus())) {
+            refresh(entity);
+            found = findArtifact(entity, name);
+        }
+        if (found == null) {
+            throw new ArtifactNotFoundException("任务 " + taskId + " 没有产物 " + name);
+        }
+        return found;
+    }
+
+    private AgentArtifact findArtifact(TaskEntity entity, String name) {
+        if (name == null) {
+            return null;
+        }
+        return readArtifacts(entity.getArtifacts()).stream()
+                .filter(artifact -> name.equals(artifact.name()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    /** 把 JSON 读回产物清单。**坏数据降级为空列表**，不要让它把任务详情一起拖垮。 */
+    private List<AgentArtifact> readArtifacts(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            AgentArtifact[] parsed = objectMapper.readValue(json, AgentArtifact[].class);
+            return parsed == null
+                    ? List.of()
+                    : Arrays.stream(parsed).filter(Objects::nonNull).toList();
+        } catch (JacksonException ex) {
+            log.warn("无法解析任务产物清单，按空列表处理：{}", ex.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 序列化产物清单。序列化失败同样降级为空数组，理由同上。 */
+    private String writeArtifacts(List<AgentArtifact> artifacts) {
+        if (artifacts == null || artifacts.isEmpty()) {
+            return "[]";
+        }
+        try {
+            return objectMapper.writeValueAsString(artifacts);
+        } catch (JacksonException ex) {
+            log.warn("无法序列化任务产物清单，按空数组处理：{}", ex.getMessage());
+            return "[]";
+        }
     }
 
     private TaskEntity require(String taskId) {
@@ -164,7 +256,8 @@ public class TaskService {
                 entity.getError(),
                 // 本地不存审批载荷（Server 不存事件，见 ADR 0015）；
                 // 等待中的任务上面已经对齐过，那时 approval 是从 Agent 现取的。
-                null
+                null,
+                readArtifacts(entity.getArtifacts())
         );
     }
 

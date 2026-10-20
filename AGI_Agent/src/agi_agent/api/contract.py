@@ -49,6 +49,20 @@ class ApprovalRequest(SchemaModel):
     steps: list[ApprovalStep] = Field(default_factory=list)
 
 
+class ArtifactRef(SchemaModel):
+    """一个已经落盘的产物，供客户端构造下载地址。
+
+    **不含本机路径、也不含供应商的临时 URL。** 前者是 Agent 的内部事实，
+    后者 24 小时就失效；客户端只需要 ``name``，通过 Server 的
+    ``/api/tasks/{taskId}/artifacts/{name}`` 取文件。
+    """
+
+    name: str
+    kind: str
+    mime: str
+    size: int
+
+
 class TaskRef(SchemaModel):
     """一个任务的当前状态——**这是客户端唯一需要读的东西**。
 
@@ -65,6 +79,7 @@ class TaskRef(SchemaModel):
     result: str | None = None
     error: str | None = None
     approval: ApprovalRequest | None = None
+    artifacts: list[ArtifactRef] = Field(default_factory=list)
 
 
 class UploadResult(SchemaModel):

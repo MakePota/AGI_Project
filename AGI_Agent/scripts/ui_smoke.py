@@ -30,6 +30,10 @@
 
 用假工具 `wechat.send_message` 作任务：它是 WRITE（会触发审批），
 但**不碰网络、不需要登录、没有真实副作用**，所以这个测试可以反复跑。
+
+**C 段（图片生成）默认不跑**：它真的调用 Qwen-Image-3.0，约 0.25 元/张。
+需要时加 `--with-generation`。默认关闭是刻意的——一个每次跑都要花钱的
+“常规测试”，迟早会被人无意中反复执行。
 """
 
 from __future__ import annotations
@@ -83,6 +87,18 @@ def make_probe_image(dest: Path) -> str:
     return digits.group(0)
 
 
+def fill_goal(page, text: str) -> None:
+    """填任务目标，并等 Vue 的 v-model 跟上。
+
+    Playwright 的 ``fill`` 会同步派发 input 事件，但 Vue 的响应式更新在下一个
+    tick。紧接着点“发送”可能读到旧值——实测：先填 300 个“测”做上限回归，再填
+    真正的目标，结果把 300 个“测”提交了出去，自然等不到审批面板。
+    这个等待不是“睡一下碰运气”，而是在等一个明确的异步边界。
+    """
+    page.fill("textarea", text)
+    page.wait_for_timeout(300)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="界面端到端测试")
     parser.add_argument("--url", default="http://localhost:5173/",
@@ -90,6 +106,8 @@ def main() -> int:
     parser.add_argument("--goal", default=DEFAULT_GOAL)
     parser.add_argument("--out", default=str(Path(tempfile.gettempdir()) / "agi_ui_out"),
                         help="截图与测试图片的输出目录（默认在系统临时目录）")
+    parser.add_argument("--with-generation", action="store_true",
+                        help="额外跑一次真实的图片生成（会花钱：约 0.25 元/张）")
     args = parser.parse_args()
 
     out = Path(args.out)
@@ -110,7 +128,14 @@ def main() -> int:
 
         # ---------- A. 纯文本任务：审批 → 刷新 → 批准 → 完成 ----------
         page.goto(args.url, wait_until="networkidle", timeout=30000)
-        page.fill("input", args.goal)
+
+        # 回归：uni-app 的 <input> 默认 maxlength=140。长 prompt 必须在 140 字
+        # 之后仍然完整保留——2026-10-20 实测一个 237 字的提示词在“VR”处被静默截断。
+        long_text = "测" * 300
+        fill_goal(page, long_text)
+        check("输入框不会在 140 字处截断",
+              len(page.input_value("textarea")) == len(long_text))
+        fill_goal(page, args.goal)
         page.click("uni-button:has-text('发送')")
         print("[A1] 已提交任务，等待审批面板…")
 
@@ -142,7 +167,7 @@ def main() -> int:
         number = make_probe_image(image)
         page.click("uni-button:has-text('新任务')")
         page.wait_for_timeout(600)
-        page.fill("input", IMAGE_QUESTION)
+        fill_goal(page, IMAGE_QUESTION)
 
         # uni.chooseImage 在 H5 端会临时造一个 <input type=file> 并点它，
         # 所以没法预先选中那个元素——只能等文件选择框弹出来再塞文件。
@@ -170,6 +195,40 @@ def main() -> int:
         # **这是整条链路唯一的硬证据**：图里的数字只有真的看见了才知道。
         check(f"模型读出了图里的数字 {number}", number in result_text)
         page.screenshot(path=str(out / "ui-5-image-done.png"), full_page=True)
+
+        # ---------- C. 图片生成（可选，会花钱） ----------
+        if args.with_generation:
+            print("[C1] 图片生成任务（真实调用 Qwen-Image-3.0，会产生一次费用）…")
+            page.click("uni-button:has-text('新任务')")
+            page.wait_for_timeout(600)
+            fill_goal(
+                page,
+                "生成一张简单的图片：一只简笔画风格的白猫坐在窗台上，"
+                "浅蓝色背景，画面干净无文字，尺寸 512x512。请使用 image.generate 工具。",
+            )
+            page.click("uni-button:has-text('发送')")
+            page.wait_for_selector(".approval", timeout=120000)
+            panel = page.inner_text(".approval")
+            check("生成任务走的是 image.generate", "image.generate" in panel)
+            check("审批面板显示了将发送的提示词", "prompt=" in panel)
+            page.screenshot(path=str(out / "ui-6-gen-approval.png"), full_page=True)
+
+            print("      已批准，等待生成与回传…")
+            page.click("uni-button:has-text('批准执行')")
+            # uni-app 的 <image> 在 H5 下渲染成 <uni-image><img>；
+            # 等真正的 <img> 出现，再检查它有没有加载成功。
+            page.wait_for_selector(".artifact-image img", timeout=240000)
+            img = page.query_selector(".artifact-image img")
+            src = (img.get_attribute("src") if img else "") or ""
+            check("结果区出现了生成图片", img is not None)
+            check("图片地址走后端的任务产物接口",
+                  "/api/tasks/" in src and "/artifacts/" in src)
+            # naturalWidth > 0 是“浏览器真的把图片解码出来了”的证据；
+            # 只检查元素存在会把一张 404 的破图也算通过。
+            natural = page.evaluate("(el) => el.naturalWidth", img) if img else 0
+            check(f"图片真的加载成功（naturalWidth={natural}）", natural > 0)
+            check("任务状态为已完成", "已完成" in page.inner_text(".status"))
+            page.screenshot(path=str(out / "ui-7-gen-done.png"), full_page=True)
 
         check("浏览器无 JS 报错", not errors)
         if errors:

@@ -33,6 +33,9 @@ triage（分诊）
   恢复依赖 checkpointer 把执行状态落盘（ADR 0004）。
 - **`PlanStep` 与 `ToolCall` 分开保存**：前者是「打算做什么」（意图），后者是「实际做了什么」
   （执行记录）。这样 reviewer 审查的是**计划本身**，而不只是执行结果。
+- **reviewer 还能看到每次工具调用的参数**（与审批摘要共用同一份渲染）。只看结果时，
+  它无法判断“到底有没有用参考图、动的是哪个文件”；2026-10-20 的图生图实测里，
+  正是因为看不到 `reference_images`，它把一次成功的调用误判成“无法确认”并驳回。
 - **`Event` 设为 frozen**，作为不可篡改的审计轨迹。
 - **两类结局会直接停下，不经过审查也不重规划**（`route_after_execute`）：
   - **结果不确定**：重规划就是重试，而重试一个可能已生效的写操作会叠加上一次动作。
@@ -74,5 +77,7 @@ triage（分诊）
 6. **改进度输出** → `src/agi_agent/cli.py` 的 `_drive`/`_report`，
    以及节点里的 `get_stream_writer()` 调用（见 `executor.py` 的 `_progress`）。
    **长耗时工具必须能在开始前推一行进度**，否则用户会当成卡死。
-7. **改完之后**：`tests/unit/test_graph_routing.py` 与 `tests/unit/test_uncertain_outcome.py`
+7. **改 reviewer 看到什么** → `graph/nodes/reviewer.py` 的 `_render`；
+   参数渲染与审批摘要共用 `policies.risk.render_arguments`，不要各写一份。
+8. **改完之后**：`tests/unit/test_graph_routing.py` 与 `tests/unit/test_uncertain_outcome.py`
    覆盖路由、重规划上限与两类中断，不消耗 API 额度，改流程时先跑它们。

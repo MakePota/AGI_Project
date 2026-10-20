@@ -3,8 +3,9 @@
 一个长期演进的个人 AI 智能体应用——不是一次性 Demo。目标是让 Agent 能听懂自然语言任务、
 制定计划、选择工具、分步执行、处理失败、**在涉及副作用时请你确认**，并把结果报告回来。
 
-目前它真的能做的事：在 Steam 上查价 / 搜索 / 增删购物车、读本地文件、**看懂一张图片**，
-以及一个能在浏览器里用的界面——输入任务、看执行过程、对需要确认的动作做审批。
+目前它真的能做的事：在 Steam 上查价 / 搜索 / 增删购物车、读本地文件、**看懂一张图片**、
+**按描述生成图片（也支持拿本机图片做图生图/编辑）**，以及一个能在浏览器里用的界面——
+输入任务、看执行过程、对需要确认的动作做审批、**看到生成出来的图片**。
 
 ## 三个部分
 
@@ -91,14 +92,15 @@ cd <HBuilderX 安装目录> && ./cli.exe launch web --project AGI_Client
 | **MCP** | 一套让 AI 应用接入外部工具的通用协议。本项目**有意还没接**（等真实的现成工具出现） | [ADR 0006](AGI_Agent/docs/decisions/0006-external-capability-policy.md) |
 | **薄转发层** | `AGI_Server` 的定位：只管转发与存镜像，不做智能体推理 | [`AGI_Server/docs/architecture.md`](AGI_Server/docs/architecture.md) |
 | **Playwright** | 浏览器自动化库。Steam 那些工具靠它驱动真实浏览器 | [ADR 0005](AGI_Agent/docs/decisions/0005-playwright-for-browser-automation.md) |
-| **DashScope / 千问** | 阿里云的模型服务。本项目**只**用它做图像理解，文本推理仍走 DeepSeek | [ADR 0012](AGI_Agent/docs/decisions/0012-vision-via-dashscope.md) |
+| **DashScope / 千问** | 阿里云的模型服务。本项目用它做**图像理解与图片生成**，文本推理仍走 DeepSeek | [ADR 0012](AGI_Agent/docs/decisions/0012-vision-via-dashscope.md)、[ADR 0018](AGI_Agent/docs/decisions/0018-image-generation-with-artifacts.md) |
+| **artifact / 产物** | 工具生成并落盘、需要交给用户的东西（当前只有图片）。**结构化传递**，不从回复文本里解析 | [ADR 0018](AGI_Agent/docs/decisions/0018-image-generation-with-artifacts.md) |
 
 ## 开发
 
 ```bash
-cd AGI_Agent && uv run pytest          # 161 个单测，不消耗任何 API 额度
+cd AGI_Agent && uv run pytest          # 225 个单测，不消耗任何 API 额度
 cd AGI_Agent && uv run ruff check .    # 静态检查
-cd AGI_Server && mvn test              # 10 个 Java 单测，不连库不联网
+cd AGI_Server && mvn test              # 24 个 Java 单测，不连库不联网
 cd AGI_Agent && uv run python scripts/check_docs.py   # 文档腐化检查，见下
 ```
 
@@ -116,7 +118,12 @@ cd AGI_Agent && uv run python scripts/check_docs.py   # 文档腐化检查，见
 cd AGI_Agent
 uv run python scripts/smoke_api.py --base-url http://127.0.0.1:8090/api   # 接口层
 uv run python scripts/ui_smoke.py                                         # 界面层（真实浏览器）
+uv run python scripts/smoke_artifacts.py --base-url http://127.0.0.1:8090/api --mode server
 ```
 
 `ui_smoke.py` 会真的开一个浏览器把流程点一遍，包括"发一张画着随机数字的图、
-看模型能不能读出来"——只有真的看见了才答得对。
+看模型能不能读出来"——只有真的看见了才答得对。加 `--with-generation` 还会再跑一次
+**真实的图片生成**（会花钱），验证结果区能显示生成的图。
+
+`smoke_artifacts.py` **默认会真实调用 Qwen-Image-3.0**（约 0.25 元/张），
+验证“生成 → 落盘 → 经 Server 取回”的完整产物链路。

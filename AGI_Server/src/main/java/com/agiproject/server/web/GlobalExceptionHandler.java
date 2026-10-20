@@ -1,6 +1,9 @@
 package com.agiproject.server.web;
 
 import com.agiproject.server.agent.AgentUnavailableException;
+import com.agiproject.server.task.ArtifactNotFoundException;
+import com.agiproject.server.task.ArtifactTooLargeException;
+import com.agiproject.server.task.ArtifactUnavailableException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -44,6 +47,31 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NoSuchElementException.class)
     ProblemDetail handleNotFound(NoSuchElementException ex) {
         return problem(HttpStatus.NOT_FOUND, "任务不存在", ex.getMessage());
+    }
+
+    /**
+     * 产物不存在。
+     *
+     * <p><b>不能复用 {@code NoSuchElementException} 的处理器</b>：那里的标题写死是
+     * “任务不存在”。图片丢了却让用户去查任务，会把排查方向带偏。
+     */
+    @ExceptionHandler(ArtifactNotFoundException.class)
+    ProblemDetail handleArtifactNotFound(ArtifactNotFoundException ex) {
+        return problem(HttpStatus.NOT_FOUND, "图片不存在", ex.getMessage());
+    }
+
+    /** 产物内容不可用（类型不在白名单、文件头不是图片、本地缓存写失败）。 */
+    @ExceptionHandler(ArtifactUnavailableException.class)
+    ProblemDetail handleArtifactUnavailable(ArtifactUnavailableException ex) {
+        log.warn("产物不可用：{}", ex.getMessage());
+        return problem(HttpStatus.BAD_GATEWAY, "图片暂不可用", ex.getMessage());
+    }
+
+    /** 上游产物超过本服务的缓冲上限——是上游/配置问题，不是调用方的错。 */
+    @ExceptionHandler(ArtifactTooLargeException.class)
+    ProblemDetail handleArtifactTooLarge(ArtifactTooLargeException ex) {
+        log.error("产物过大：{}", ex.getMessage());
+        return problem(HttpStatus.BAD_GATEWAY, "图片过大或上游响应异常", ex.getMessage());
     }
 
     @ExceptionHandler(IllegalStateException.class)

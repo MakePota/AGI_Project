@@ -33,6 +33,7 @@ from langgraph.types import Command
 from agi_agent.api.contract import (
     ApprovalRequest,
     ApprovalStep,
+    ArtifactRef,
     TaskEvent,
     TaskRef,
 )
@@ -79,6 +80,9 @@ class _Record:
     result: str | None = None
     error: str | None = None
     approval: ApprovalRequest | None = None
+    #: 产物清单。终态任务不再向 Agent 对齐，这份快照是客户端在任务结束后
+    #: 唯一能拿到的产物元数据，所以它必须随状态一起保存，不能只留在事件里。
+    artifacts: list[ArtifactRef] = field(default_factory=list)
     events: deque[TaskEvent] = field(default_factory=lambda: deque(maxlen=_EVENT_BUFFER))
     next_seq: int = 0
     finished: bool = False
@@ -93,6 +97,7 @@ class _Record:
             result=self.result,
             error=self.error,
             approval=self.approval,
+            artifacts=self.artifacts,
         )
 
 
@@ -314,6 +319,11 @@ class TaskRunner:
                 payload["result"] = _preview(call.result)
             if call.error:
                 payload["error"] = _preview(call.error)
+            if call.artifacts:
+                # 产物名不做截断：它是客户端构造下载地址的唯一依据。
+                payload["artifacts"] = [
+                    artifact.model_dump(mode="json") for artifact in call.artifacts
+                ]
             self._emit(record, EventType.TOOL_FINISHED, payload)
 
     def _settle(self, record: _Record, config: dict[str, Any]) -> None:
@@ -330,27 +340,47 @@ class TaskRunner:
         status = getattr(task, "status", TaskStatus.FAILED)
         result = values.get("reply") or getattr(task, "result", None)
         error = getattr(task, "error", None)
+        artifacts = [
+            ArtifactRef(
+                name=artifact.name,
+                kind=str(artifact.kind),
+                mime=artifact.mime,
+                size=artifact.size,
+            )
+            for artifact in (getattr(task, "artifacts", None) or [])
+        ]
 
         with self._lock:
             record.status = status
             record.result = result
             record.error = error
+            record.artifacts = artifacts
             record.finished = True
+            # 三类终态事件都带上产物：即使任务没完成，已经生成的文件也要让人看见。
+            extra = (
+                {"artifacts": [artifact.model_dump(mode="json") for artifact in artifacts]}
+                if artifacts
+                else {}
+            )
             if status is TaskStatus.COMPLETED:
-                self._emit(record, EventType.TASK_COMPLETED, {"reply": _preview(result)})
+                self._emit(
+                    record,
+                    EventType.TASK_COMPLETED,
+                    {"reply": _preview(result), **extra},
+                )
             elif status is TaskStatus.NEEDS_HUMAN:
                 # "停下等人"不是失败（ADR 0010/0011）：可能是要核实结果，
                 # 也可能是要修环境。用专门的事件类型，不要并进 TASK_FAILED。
                 self._emit(
                     record,
                     EventType.TASK_NEEDS_HUMAN,
-                    {"status": status.value, "detail": _preview(result or error)},
+                    {"status": status.value, "detail": _preview(result or error), **extra},
                 )
             else:
                 self._emit(
                     record,
                     EventType.TASK_FAILED,
-                    {"status": status.value, "error": _preview(error or result)},
+                    {"status": status.value, "error": _preview(error or result), **extra},
                 )
 
     def _await_approval(self, record: _Record, interrupt: Any) -> None:

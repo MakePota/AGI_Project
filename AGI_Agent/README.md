@@ -25,8 +25,9 @@ checkpointer**；业务数据（用户、任务列表）在 `AGI_Server` 的数�
 
 已完成并**实测跑通**：多 Agent 图（含人工确认中断与恢复）、本地只读文件工具、
 Steam 工具（搜索 / 查价 / 购物车增删查，首个 `WRITE` 风险能力）、
-图像理解工具（千问，档位由配置决定）、对外 HTTP 服务（4 + 1 个端点）、
-161 个单元测试。
+图像理解工具（千问，档位由配置决定）、
+**图片生成（Qwen-Image-3.0，文生图 + 图生图，产物经三层回传）**、
+对外 HTTP 服务（4 个任务端点 + 上传 + 产物）、225 个单元测试。
 
 完整状态见仓库根目录的 `Memory.md`。**本文件不重复记录进度**——进度会变，
 写在两处必然有一处过期。
@@ -62,7 +63,7 @@ uv run agi-agent-api
 ```
 
 ```bash
-uv run pytest               # 161 个单测，不消耗 API 额度
+uv run pytest               # 225 个单测，不消耗 API 额度
 uv run ruff check .         # 静态检查；规则集与取舍见 pyproject.toml 注释
 ```
 
@@ -72,7 +73,9 @@ uv run ruff check .         # 静态检查；规则集与取舍见 pyproject.tom
 | --- | --- | --- |
 | `steam_login.py` | Steam 人工登录一次，并保存会话状态（`--verify` 只检查） | 代理开着 |
 | `smoke_api.py` | 接口层端到端：建任务 → 等审批 → 提交 → 跑完 | `agi-agent-api` 在跑 |
-| `ui_smoke.py` | 界面层端到端（真实浏览器，含"发图看模型能否读出数字"） | 四个服务都在跑 |
+| `smoke_artifacts.py` | 真实生成一张图片，验证 `TaskRef.artifacts` 与下载端点（**会花钱**） | 密钥可用；对 Agent 或 Server 都能跑 |
+| `probe_image_generation.py` | 探针：确认 Qwen-Image 的端点、请求形状、错误码（默认 dry-run） | 密钥可用 |
+| `ui_smoke.py` | 界面层端到端（真实浏览器，含"发图看模型能否读出数字"；加 `--with-generation` 再验图片生成） | 四个服务都在跑 |
 
 `smoke_api.py` 可以对着 `AGI_Server` 跑（`--base-url http://127.0.0.1:8090/api`）——
 两个服务的接口形状一致，同一套脚本能验两边。

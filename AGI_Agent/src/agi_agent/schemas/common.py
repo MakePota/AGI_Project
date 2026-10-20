@@ -25,9 +25,13 @@ class Role(StrEnum):
     槽位分两类，不要混淆：
 
     - **协作角色**（conversation / planner / executor / reviewer）：图里的节点按此取值。
-    - **能力档位**（vision_quick / vision_deep）：只有工具用得到，没有任何节点取值。
-      分两个档位而不是一个带参数的档位，是为了让"用哪个模型"由**注册表与配置**决定，
-      而不是由计划里的参数（即模型的输出）决定，见 ADR 0012。
+    - **能力档位**（vision_quick / vision_deep / image_generation）：只有工具用得到，
+      没有任何节点取值。分档位而不是一个带参数的档位，是为了让"用哪个模型"由
+      **注册表与配置**决定，而不是由计划里的参数（即模型的输出）决定，见 ADR 0012。
+
+    ``image_generation`` 是一个特殊档位：它绑定的模型**不是聊天模型**，
+    不能交给 ``get_model``（那会造出一个 ChatOpenAI 去调 /chat/completions）。
+    只有 ``tools/builtin/image.py`` 直接读它并使用图片生成端点，见 ADR 0018。
     """
 
     CONVERSATION = "conversation"
@@ -38,6 +42,8 @@ class Role(StrEnum):
     VISION_QUICK = "vision_quick"
     #: 图像理解的"准"档：用于需要推理的图像问题（图表、比对、长文档截图）。
     VISION_DEEP = "vision_deep"
+    #: 图片生成：绑定 Qwen-Image-3.0。**不要传给 get_model**，理由见上面的类注释。
+    IMAGE_GENERATION = "image_generation"
 
 
 class RiskLevel(StrEnum):

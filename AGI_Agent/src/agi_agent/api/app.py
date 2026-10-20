@@ -11,6 +11,7 @@
 `GET  /tasks/{id}/events`  SSE 事件流（可选，只是免轮询的优化）
 `POST /tasks/{id}/approval` 提交审批决定并恢复执行
 `POST /uploads`            收下一张图片并存到本机，返回路径
+`GET  /artifacts/{name}`   取一个已经生成的产物（图片）
 =========================  ============================================
 
 **为什么 SSE 与状态查询是两条独立的路**：审批语义不挂在连接上（ADR 0015）。
@@ -27,16 +28,17 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from agi_agent.api.contract import TaskRef, UploadResult
 from agi_agent.api.runner import TaskRunner
 from agi_agent.api.uploads import UploadRejected, save_image
+from agi_agent.artifacts import resolve_artifact
 from agi_agent.config import CHECKPOINT_DB
 from agi_agent.graph.builder import build_graph
 from agi_agent.graph.checkpoint import sqlite_checkpointer
-from agi_agent.images import MAX_IMAGE_BYTES
+from agi_agent.images import MAX_IMAGE_BYTES, sniff_mime
 
 #: SSE 轮询间隔。事件本来就产生于秒级动作，0.25 秒的粒度在体感上就是实时的，
 #: 换来的是不必做跨线程唤醒（工作线程往队列里放数据、asyncio 侧负责取，
@@ -154,6 +156,38 @@ def create_app() -> FastAPI:
         except UploadRejected as exc:
             # 400 而不是 500：这是调用方给的东西不对，不是服务端故障。
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/artifacts/{name}")
+    def get_artifact(name: str) -> FileResponse:
+        """取一个已经生成的产物文件。
+
+        **名字不合法与文件不存在都回 404**：区分两者会让这个端点变成目录探测工具。
+
+        MIME 仍然按文件头嗅探，不采信存盘时的记录——存盘记录在数据库/checkpoint
+        里，和磁盘上的实际内容可能因手工改动而不一致；文件头是唯一的事实。
+        """
+        try:
+            path = resolve_artifact(name)
+        except (ValueError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail="没有这个产物") from exc
+
+        try:
+            with path.open("rb") as handle:
+                mime = sniff_mime(handle.read(16))
+        except OSError as exc:
+            raise HTTPException(status_code=404, detail="没有这个产物") from exc
+        if mime is None:
+            raise HTTPException(status_code=404, detail="没有这个产物")
+
+        return FileResponse(
+            path,
+            media_type=mime,
+            filename=name,
+            content_disposition_type="inline",
+            # 产物名唯一且内容不可变，可以缓存一天。必须是 private：这是一个
+            # 没有认证的本机服务，不要让中间代理把它当成公共资源。
+            headers={"Cache-Control": "private, max-age=86400"},
+        )
 
     return app
 

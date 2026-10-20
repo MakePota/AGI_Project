@@ -19,6 +19,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 _ALLOWED: list[tuple[str, str]] = [
     ("agi_agent.schemas.common", "Role"),
     ("agi_agent.schemas.common", "RiskLevel"),
+    ("agi_agent.schemas.artifact", "Artifact"),
+    ("agi_agent.schemas.artifact", "ArtifactKind"),
     ("agi_agent.schemas.task", "Task"),
     ("agi_agent.schemas.task", "TaskKind"),
     ("agi_agent.schemas.task", "TaskStatus"),

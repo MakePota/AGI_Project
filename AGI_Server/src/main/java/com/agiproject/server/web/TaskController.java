@@ -113,7 +113,7 @@ public class TaskController {
                             log.warn("任务 {} 的事件流中断：{}", taskId, error.getMessage());
                             endWithError(emitter, error);
                         },
-                        emitter::complete);
+                        () -> completeQuietly(emitter));
 
         ScheduledFuture<?> heartbeat = heartbeatScheduler.scheduleAtFixedRate(
                 () -> beat(emitter),
@@ -124,7 +124,7 @@ public class TaskController {
         emitter.onCompletion(() -> stop(heartbeat, subscription));
         emitter.onTimeout(() -> {
             stop(heartbeat, subscription);
-            emitter.complete();
+            completeQuietly(emitter);
         });
         emitter.onError(ex -> stop(heartbeat, subscription));
 
@@ -149,7 +149,7 @@ public class TaskController {
             emitter.send(SseEmitter.event().data(event.data()));
         } catch (IOException | IllegalStateException ex) {
             // 浏览器关掉标签页就会走到这里，属于正常现象，不是错误。
-            emitter.complete();
+            completeQuietly(emitter);
         }
     }
 
@@ -157,7 +157,7 @@ public class TaskController {
         try {
             emitter.send(SseEmitter.event().comment("keep-alive"));
         } catch (IOException | IllegalStateException ex) {
-            emitter.complete();
+            completeQuietly(emitter);
         }
     }
 
@@ -173,6 +173,23 @@ public class TaskController {
         } catch (IOException | IllegalStateException ex) {
             // 前端已经走了，那就没什么可发的了。
         }
-        emitter.complete();
+        completeQuietly(emitter);
+    }
+
+    /**
+     * 安静地结束 SSE。
+     *
+     * <p>客户端已经断开时，{@code complete()} 自己也会再抛一次
+     * {@code AsyncRequestNotUsableException}。那是“连接已经不可用”的正常结果，
+     * 不是故障。让它冒出去会被全局异常处理器当成未预期异常，并尝试往
+     * {@code text/event-stream} 响应写 {@code ProblemDetail}——又失败一次，
+     * 每次任务正常结束都会留下两条 ERROR 日志。实测踩到过。
+     */
+    private static void completeQuietly(SseEmitter emitter) {
+        try {
+            emitter.complete();
+        } catch (RuntimeException ignored) {
+            // 连接已不可用，没有需要做的收尾动作。
+        }
     }
 }

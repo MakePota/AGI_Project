@@ -51,6 +51,13 @@ public class TaskEntity {
     @Column(name = "error", columnDefinition = "text")
     private String error;
 
+    /**
+     * 产物清单的 JSON 数组。**存字符串而不是实体映射**：产物是 Agent 的事实，
+     * 服务端只需要原样抄写与读回，不需要按字段查询它们。
+     */
+    @Column(name = "artifacts", columnDefinition = "text")
+    private String artifacts;
+
     /** 取自 Agent 的创建时间——保持两边一致，不用本地时钟自己造一个。 */
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
@@ -107,6 +114,14 @@ public class TaskEntity {
 
     public void setError(String error) {
         this.error = error;
+    }
+
+    public String getArtifacts() {
+        return artifacts;
+    }
+
+    public void setArtifacts(String artifacts) {
+        this.artifacts = artifacts;
     }
 
     public Instant getCreatedAt() {

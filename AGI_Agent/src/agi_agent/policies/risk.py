@@ -21,6 +21,14 @@ _RISK_LABEL = {
 #: 又不能因为某段长文本（消息正文、长路径）把审批摘要撑满整屏。
 _SUMMARY_VALUE_LIMIT = 80
 
+#: 少数参数本身就是“要被审批的那个东西”，不能按 80 字符截断。
+#:
+#: ``prompt`` 是图片生成的核心：用户批准的就是这段提示词。截到 80 字符时，
+#: 面板上只剩前半句，用户无法判断模型到底会按什么去画——这等于让审批失去意义。
+#: 上限仍然保留（500），因为一段几千字的提示词会把摘要撑得没法读。
+_LONG_VALUE_LIMIT = 500
+_LONG_VALUE_KEYS = frozenset({"prompt"})
+
 
 def assign_risk(plan: Plan) -> Plan:
     """按工具注册表重新标注每个步骤的风险，覆盖计划自带的值。"""
@@ -43,15 +51,21 @@ def highest_risk(plan: Plan) -> RiskLevel:
     return RiskLevel.READ
 
 
-def _render_arguments(arguments: dict[str, Any]) -> str:
-    """把步骤参数渲染成一行紧凑的事实。"""
+def render_arguments(arguments: dict[str, Any]) -> str:
+    """把步骤参数渲染成一行紧凑的事实。
+
+    **审批摘要与 reviewer 共用这一份**。两处都需要“真正被执行的东西”：
+    审批者要看清将要发生什么；reviewer 要判断执行记录是否真的做了用户要求的事
+    （例如“有没有把参考图放进 reference_images”）。各写一份迟早会漂移。
+    """
     if not arguments:
         return ""
     parts = []
     for key, value in arguments.items():
         text = str(value).replace("\n", " ")
-        if len(text) > _SUMMARY_VALUE_LIMIT:
-            text = text[:_SUMMARY_VALUE_LIMIT] + "…"
+        limit = _LONG_VALUE_LIMIT if key in _LONG_VALUE_KEYS else _SUMMARY_VALUE_LIMIT
+        if len(text) > limit:
+            text = text[:limit] + "…"
         parts.append(f"{key}={text}")
     return "参数：" + "，".join(parts)
 
@@ -75,7 +89,7 @@ def approval_summary(plan: Plan) -> str:
         )
         # 纯推理步骤没有工具也就没有参数，保持单行不啰嗦。
         if step.tool:
-            rendered = _render_arguments(step.arguments)
+            rendered = render_arguments(step.arguments)
             if rendered:
                 lines.append(f"      {rendered}")
     return "\n".join(lines)

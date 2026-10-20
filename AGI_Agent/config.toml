@@ -5,7 +5,8 @@
 # 或系统环境变量中，后续会迁移到服务端密钥库。
 #
 # 目前四个协作角色全部绑定 DeepSeek-V4.1-Flash；
-# 图像理解另有两个档位槽位绑定千问（见文件末尾，它们不被任何图节点使用）。
+# 图像理解另有两个档位槽位绑定千问，图片生成有一个档位槽位绑定 Qwen-Image
+# （见文件末尾，它们都不被任何图节点使用）。
 # vendor = "openai" 表示走 OpenAI 兼容端点，可覆盖 ChatGPT / DeepSeek / Kimi / 智谱 / 千问。
 
 [llm.conversation]
@@ -63,3 +64,28 @@ api_key_env = "DASHSCOPE_API_KEY"
 # 显式打开（同时也是供应商的默认值）：图表、图片比对这类问题应该让它想。
 # 之所以写出来而不是依赖默认——默认值变了没有人会通知我们。
 extra_body = { enable_thinking = true }
+
+# ---------------------------------------------------------------------------
+# 图片生成档位。
+#
+# **这个槽位不能交给 get_model。** get_model 造出来的是 ChatOpenAI，只会调
+# /chat/completions；图片生成是另一个端点、另一套请求体。只有
+# tools/builtin/image.py 直接读这段配置并走 HTTP。
+#
+# base_url 写域名，**不要写 /compatible-mode/v1**：工具会在其后追加原生同步端点
+# /api/v1/services/aigc/multimodal-generation/generation。
+#
+# 为什么不用 OpenAI 兼容的 /images/generations：2026-10-20 实测旧域名
+# https://dashscope.aliyuncs.com 上该路径直接 404。兼容示例全部使用业务空间
+# 专属域名（{WorkspaceId}.cn-beijing.maas.aliyuncs.com），而本机没有 WorkspaceId。
+# 原生同步端点在旧域名上实测可用（T2I / I2I 均通过）。
+#
+# 模型默认 Pro：用户已确认。标准版 qwen-image-3.0 更便宜（约 0.18 元/张），
+# 改这里即可切换，代码零改动。Pro 官方限流 1 RPM，连续任务之间要等约 60 秒。
+# ---------------------------------------------------------------------------
+
+[llm.image_generation]
+vendor = "openai"
+model = "qwen-image-3.0-pro"
+base_url = "https://dashscope.aliyuncs.com"
+api_key_env = "DASHSCOPE_API_KEY"

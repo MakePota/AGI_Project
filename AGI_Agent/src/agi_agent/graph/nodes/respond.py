@@ -10,6 +10,22 @@ def _render_calls(calls: list) -> str:
     return "\n".join(f"  · {c.tool}\n    {c.error}" for c in calls)
 
 
+def _artifact_lines(state: AgentState) -> str:
+    """把产物清单附在最终回复后面。
+
+    **结构化事实仍然以 ``Task.artifacts`` 为准**；这里只是让人读回复时能看到
+    “生成了什么”。界面不能从这段文本里解析产物——那会把展示文案变成接口。
+    """
+    artifacts = state["task"].artifacts
+    if not artifacts:
+        return ""
+    lines = "\n".join(
+        f"  · {artifact.name}（{artifact.mime}，{artifact.size:,} 字节）"
+        for artifact in artifacts
+    )
+    return f"\n\n已生成文件：\n{lines}"
+
+
 def _halt_reply(state: AgentState) -> str:
     """执行被中断时的回复。
 
@@ -74,6 +90,8 @@ def respond(state: AgentState) -> dict:
         status = TaskStatus.FAILED
     else:
         reply, status = existing or "任务未能完成。", TaskStatus.FAILED
+
+    reply += _artifact_lines(state)
 
     return {
         "reply": reply,

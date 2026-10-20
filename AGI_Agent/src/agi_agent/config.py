@@ -99,6 +99,9 @@ class LLMSettings(BaseModel):
     reviewer: ModelSpec
     vision_quick: ModelSpec
     vision_deep: ModelSpec
+    #: 图片生成。这个槽位**只能由 tools/builtin/image.py 直接读取**，
+    #: 不能交给 get_model——图片端点和聊天端点不是一回事，见 ADR 0018。
+    image_generation: ModelSpec
 
 
 class Settings(BaseSettings):

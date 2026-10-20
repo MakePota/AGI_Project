@@ -2,10 +2,13 @@ package com.agiproject.server.task;
 
 import com.agiproject.server.agent.AgentClient;
 import com.agiproject.server.agent.AgentContract;
+import com.agiproject.server.agent.AgentContract.AgentArtifact;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Instant;
 import java.util.List;
@@ -36,19 +39,28 @@ class TaskServiceTest {
 
     private TaskRepository repository;
     private AgentClient agentClient;
+    private ArtifactService artifactService;
+    private ObjectMapper objectMapper;
     private TaskService service;
 
     @BeforeEach
     void setUp() {
         repository = mock(TaskRepository.class);
         agentClient = mock(AgentClient.class);
-        service = new TaskService(repository, agentClient);
+        artifactService = mock(ArtifactService.class);
+        objectMapper = JsonMapper.builder().build();
+        service = new TaskService(repository, agentClient, artifactService, objectMapper);
     }
 
     private static AgentContract.AgentTask agentTask(String id, String status, String result) {
+        return agentTask(id, status, result, List.of());
+    }
+
+    private static AgentContract.AgentTask agentTask(
+            String id, String status, String result, List<AgentArtifact> artifacts) {
         return new AgentContract.AgentTask(
                 id, status, "列出目录", "2026-10-13T10:00:00Z", "2026-10-13T10:00:05Z",
-                result, null, null);
+                result, null, null, artifacts);
     }
 
     private static TaskEntity entity(String id, String status) {
@@ -172,7 +184,8 @@ class TaskServiceTest {
     @DisplayName("解析不了的时间戳不该让整个请求失败")
     void unparseableTimestampFallsBackInsteadOfFailing() {
         AgentContract.AgentTask weird = new AgentContract.AgentTask(
-                "t-1", "received", "列出目录", "不是时间", null, null, null, null);
+                "t-1", "received", "列出目录", "不是时间", null, null, null, null,
+                List.of());
         when(agentClient.createTask(anyString())).thenReturn(weird);
 
         service.create("列出目录");
@@ -194,5 +207,94 @@ class TaskServiceTest {
         assertThat(TaskStatuses.isTerminal("executing")).isFalse();
         assertThat(TaskStatuses.isTerminal(null)).isFalse();
         assertThat(TaskStatuses.isTerminal("未来某个新状态")).isFalse();
+    }
+
+    @Test
+    @DisplayName("终态任务从本地镜像读产物，不再问 Agent")
+    void terminalTaskExposesPersistedArtifacts() {
+        TaskEntity stored = entity("t-1", "completed");
+        stored.setArtifacts("""
+                [{"name":"20261020-120000-deadbeef.png","mime":"image/png","size":1234,"kind":"image"}]
+                """);
+        when(repository.findById("t-1")).thenReturn(Optional.of(stored));
+
+        AgentContract.AgentTask view = service.get("t-1");
+
+        assertThat(view.artifacts()).hasSize(1);
+        assertThat(view.artifacts().getFirst().name())
+                .isEqualTo("20261020-120000-deadbeef.png");
+        verifyNoInteractions(agentClient);
+    }
+
+    @Test
+    @DisplayName("非终态任务刷新时把产物元数据抄进本地镜像，并尽力缓存文件")
+    void refreshPersistsArtifactsAndCachesFile() {
+        TaskEntity stored = entity("t-1", "executing");
+        AgentArtifact artifact = new AgentArtifact(
+                "20261020-120000-deadbeef.png", "image/png", 1234, "image");
+        when(repository.findById("t-1")).thenReturn(Optional.of(stored));
+        when(agentClient.getTask("t-1"))
+                .thenReturn(agentTask("t-1", "completed", "好了", List.of(artifact)));
+
+        service.get("t-1");
+
+        assertThat(stored.getArtifacts()).contains("20261020-120000-deadbeef.png");
+        verify(artifactService).ensureStored("t-1", artifact);
+    }
+
+    @Test
+    @DisplayName("产物 JSON 坏了只降级为空列表，不让任务详情打不开")
+    void corruptArtifactJsonFallsBack() {
+        TaskEntity stored = entity("t-1", "completed");
+        stored.setArtifacts("{not json");
+        when(repository.findById("t-1")).thenReturn(Optional.of(stored));
+
+        AgentContract.AgentTask view = service.get("t-1");
+
+        assertThat(view.artifacts()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("取产物时先在本地镜像里找")
+    void getArtifactFromLocalMirror() {
+        TaskEntity stored = entity("t-1", "completed");
+        stored.setArtifacts("""
+                [{"name":"20261020-120000-deadbeef.png","mime":"image/png","size":1234,"kind":"image"}]
+                """);
+        when(repository.findById("t-1")).thenReturn(Optional.of(stored));
+
+        AgentArtifact artifact = service.getArtifact(
+                "t-1", "20261020-120000-deadbeef.png");
+
+        assertThat(artifact.name()).isEqualTo("20261020-120000-deadbeef.png");
+        verifyNoInteractions(agentClient);
+    }
+
+    @Test
+    @DisplayName("产物不属于这个任务时抛 ArtifactNotFoundException")
+    void getArtifactRejectsForeignName() {
+        TaskEntity stored = entity("t-1", "completed");
+        stored.setArtifacts("[]");
+        when(repository.findById("t-1")).thenReturn(Optional.of(stored));
+
+        assertThatThrownBy(() -> service.getArtifact("t-1", "other.png"))
+                .isInstanceOf(ArtifactNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("非终态任务取产物时先向 Agent 对齐一次")
+    void getArtifactRefreshesNonTerminalTask() {
+        TaskEntity stored = entity("t-1", "executing");
+        AgentArtifact artifact = new AgentArtifact(
+                "20261020-120000-deadbeef.png", "image/png", 1234, "image");
+        when(repository.findById("t-1")).thenReturn(Optional.of(stored));
+        when(agentClient.getTask("t-1"))
+                .thenReturn(agentTask("t-1", "completed", "好了", List.of(artifact)));
+
+        AgentArtifact got = service.getArtifact(
+                "t-1", "20261020-120000-deadbeef.png");
+
+        assertThat(got).isEqualTo(artifact);
+        verify(agentClient).getTask("t-1");
     }
 }

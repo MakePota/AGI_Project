@@ -12,6 +12,7 @@ from agi_agent.policies.risk import (
     approval_summary,
     assign_risk,
     highest_risk,
+    render_arguments,
     requires_approval,
 )
 from agi_agent.schemas import Plan, PlanStep, RiskLevel
@@ -126,3 +127,20 @@ def test_reasoning_steps_have_no_argument_line():
     """纯推理步骤没有工具，也就不该多出一行空参数。"""
     summary = approval_summary(_plan(PlanStep(index=0, description="先想清楚")))
     assert "参数：" not in summary
+
+
+def test_prompt_gets_the_longer_limit():
+    """prompt 是图片生成的核心，不能被 80 字符截掉。
+
+    用户批准的就是这段提示词；截断后只剩前半句，审批就变成批准一个残缺的请求。
+    """
+    prompt = "猫" * 200
+    rendered = render_arguments({"prompt": prompt})
+    assert prompt in rendered
+
+
+def test_long_prompt_is_still_bounded():
+    """但也不能无限长：摘要要能读，500 字符是刻意的上界。"""
+    rendered = render_arguments({"prompt": "猫" * 600})
+    assert "猫" * 500 in rendered
+    assert "猫" * 501 not in rendered

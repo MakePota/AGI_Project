@@ -81,6 +81,18 @@ agi:
     # 任务可能长时间停在"等人批准"，期间流上只有心跳。
     # 给太短会让正常流程被误杀。
     event-timeout-ms: 1800000
+    # 下载生成图片的超时。不能复用 request-timeout-ms：那个 15 秒是为
+    # "立刻返回"的接口设的，而这里要把一个可能几 MB 的文件完整读进来。
+    artifact-timeout-ms: 30000
+
+  artifacts:
+    # 从 Agent 镜像过来的产物文件放在哪。相对路径以**本服务进程的工作目录**为准
+    # （`mvn spring-boot:run` 时是 AGI_Server/）。启动日志会打印解析后的绝对路径。
+    # 放在本服务自己的目录里，而不是去读 Agent 的目录：两个服务将来可能不在同一台机器，
+    # 走 HTTP 下载是那条边界现在就成立的做法。
+    dir: ${AGI_ARTIFACT_DIR:./artifacts}
+    # 单个产物的缓存上限，必须**大于** Agent 侧的 20 MB。给 24 MiB。
+    max-bytes: 25165824
 
 logging:
   level:
